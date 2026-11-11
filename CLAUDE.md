@@ -16,8 +16,9 @@ Docs, UI, code comments and identifiers are in English.
 - `bench/results/`: bench runs as JSON, `bench/baseline.json`: the baseline.
 - `corpus/`: real recordings (channel measurements and modem transmissions). Local only,
   not in version control (the user's decision: room recordings are not published).
-- `julkaise.sh` and `.julkaisu` (publishing to the user's Zoner web host, sairanen.org) are
-  local only too, git-ignored. `publish-github.sh` (GitHub Pages) is in the repo.
+- The page is published on GitHub Pages with `publish-github.sh`
+  (https://heikkisairanen.github.io/soundpaste/). GitHub Pages is the only publishing
+  target for now.
 
 ## Development-cycle commands
 
@@ -64,13 +65,12 @@ Do not tune for a single room or device pair, and do not adjust tests to make th
 - Ask the user before playing sound for the first time in each work session.
   Keep the volume moderate.
 - Ask before installing anything or adding a dependency (dev tooling included).
-- Publishing to sairanen.org/soundpaste is agreed separately. Ask first.
+- Publishing anywhere other than GitHub Pages is agreed separately. Ask first.
 - No wasm-bindgen, no npm, no bundler.
 
 ## Current state
 
-- Stages 1–8 are implemented. The page is published at sairanen.org/soundpaste and on
-  GitHub Pages. Loop D (CLI + browser on the same Mac) has been run on real audio; loop E
+- Stages 1–8 are implemented. The page is published on GitHub Pages. Loop D (CLI + browser on the same Mac) has been run on real audio; loop E
   has been run once with the PC on the published page (no PC test station yet).
 - Default waveform `v1` (16 × 4-FSK, tone hopping, chirp preamble,
   Reed–Solomon), link layer (`link/`), station (`station.rs`) and two-way

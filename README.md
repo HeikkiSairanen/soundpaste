@@ -5,7 +5,7 @@ you by sound. One computer plays through its speaker, the other listens with
 its microphone and acknowledges by sound. There is no server: everything
 happens in the browser.
 
-- Page: https://sairanen.org/soundpaste or https://heikkisairanen.github.io/soundpaste/ (publishing: see [Publishing](#publishing))
+- Page: https://heikkisairanen.github.io/soundpaste/ (publishing: see [Publishing](#publishing))
 - Design and rationale: [DESIGN.md](DESIGN.md)
 - Experiment log with measurements: [EXPERIMENTS.md](EXPERIMENTS.md)
 - Original task specification: [TASK.md](TASK.md)
