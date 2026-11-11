@@ -1,11 +1,11 @@
-// soundpaste: pääsäikeen liima.
+// soundpaste: main-thread glue.
 //
-// Hoitaa vain selainrajapinnat: mikrofonin (getUserMedia), äänen
-// (AudioContext, AudioWorklet), leikepöydän ja näkymän. Modeemi ja protokolla
-// ovat wasm-moduulissa, jota ajetaan äänisäikeessä (worklet.js).
+// Handles only the browser APIs: microphone (getUserMedia), audio
+// (AudioContext, AudioWorklet), clipboard and the view. The modem and the
+// protocol live in the wasm module, which runs on the audio thread (worklet.js).
 //
-// Vastaanotettu teksti on vierasta syötettä: se näytetään aina textContentilla,
-// ei koskaan HTML:nä, eikä linkkejä avata.
+// Received text is untrusted input: it is always shown with textContent,
+// never as HTML, and links are never opened.
 
 (() => {
   'use strict';
@@ -26,13 +26,13 @@
     received: '',
     stats: null,
     stationNow: 0,
-    listeners: [], // kehitystyökalujen kuuntelijat (dev.js), tuotannossa tyhjä
+    listeners: [], // dev-tool listeners (dev.js), empty in production
     pendingRecording: new Map(),
     peakHold: -80,
     clipSince: 0,
   };
 
-  // ------------------------------------------------------------------ loki
+  // ------------------------------------------------------------------ log
 
   const logLines = [];
   function log(text) {
@@ -55,7 +55,7 @@
     }
   }
 
-  // ------------------------------------------------------------------ käynnistys
+  // ------------------------------------------------------------------ startup
 
   async function start() {
     const button = $('start');
@@ -63,27 +63,27 @@
     button.disabled = true;
     try {
       if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('Mikrofoni vaatii suojatun yhteyden (https) ja selaimen, joka tukee äänen kaappausta.');
+        throw new Error('The microphone needs a secure connection (https) and a browser that supports audio capture.');
       }
       if (!window.AudioWorkletNode || !window.WebAssembly) {
-        throw new Error('Selain ei tue AudioWorkletia tai WebAssemblya.');
+        throw new Error('This browser does not support AudioWorklet or WebAssembly.');
       }
-      status.textContent = 'Pyydetään mikrofonia…';
-      // Puheelle tehdyt käsittelyt rikkovat modeemisignaalin, joten ne pyydetään pois.
+      status.textContent = 'Requesting the microphone…';
+      // Speech processing breaks the modem signal, so we ask for it to be turned off.
       app.stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
         video: false,
       });
       const track = app.stream.getAudioTracks()[0];
       const settings = track.getSettings ? track.getSettings() : {};
-      log(`mikrofoni: ${track.label || 'nimetön'}; kaiunpoisto=${settings.echoCancellation}, kohinanvaimennus=${settings.noiseSuppression}, automaattinen taso=${settings.autoGainControl}`);
+      log(`microphone: ${track.label || 'unnamed'}; echo cancellation=${settings.echoCancellation}, noise suppression=${settings.noiseSuppression}, auto gain=${settings.autoGainControl}`);
       if (settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl) {
-        log('VAROITUS: selain ei kytkenyt puheenkäsittelyä pois. Siirto voi epäonnistua.');
+        log('WARNING: the browser did not turn speech processing off. The transfer may fail.');
       }
 
-      status.textContent = 'Ladataan modeemia…';
-      // Näytteenottotaajuutta ei oleteta: selain valitsee laitteen taajuuden ja
-      // modeemi lukee sen AudioContextista.
+      status.textContent = 'Loading the modem…';
+      // The sample rate is not assumed: the browser picks the device rate and
+      // the modem reads it from the AudioContext.
       app.ctx = new AudioContext({ latencyHint: 'interactive' });
       await app.ctx.audioWorklet.addModule('./worklet.js');
       const wasm = await fetchWasm();
@@ -96,17 +96,17 @@
         channelInterpretation: 'discrete',
       });
       app.node.port.onmessage = (e) => onWorkletMessage(e.data);
-      app.node.onprocessorerror = () => fatal('Äänenkäsittely kaatui. Lataa sivu uudelleen.');
+      app.node.onprocessorerror = () => fatal('Audio processing crashed. Reload the page.');
       loadWasm(wasm);
       app.ctx.createMediaStreamSource(app.stream).connect(app.node);
       app.node.connect(app.ctx.destination);
       await app.ctx.resume();
       app.sampleRate = app.ctx.sampleRate;
       const outLatency = ((app.ctx.baseLatency || 0) + (app.ctx.outputLatency || 0)) * 1000;
-      log(`ääni: ${app.ctx.sampleRate} Hz, lähtöviive noin ${outLatency.toFixed(0)} ms`);
-      track.addEventListener('ended', () => fatal('Mikrofoni katkesi. Lataa sivu uudelleen.'));
+      log(`audio: ${app.ctx.sampleRate} Hz, output latency about ${outLatency.toFixed(0)} ms`);
+      track.addEventListener('ended', () => fatal('The microphone was disconnected. Reload the page.'));
       app.ctx.addEventListener('statechange', () => {
-        log(`äänen tila: ${app.ctx.state}`);
+        log(`audio state: ${app.ctx.state}`);
         if (app.ctx.state === 'suspended') app.ctx.resume().catch(() => {});
       });
     } catch (err) {
@@ -114,23 +114,23 @@
       const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
       const missing = err && err.name === 'NotFoundError';
       status.textContent = denied
-        ? 'Mikrofonin käyttöä ei sallittu. Salli mikrofoni selaimen osoitepalkista ja paina Aloita uudelleen.'
+        ? 'Microphone access was not allowed. Allow the microphone from the address bar and press Start again.'
         : missing
-          ? 'Mikrofonia ei löytynyt.'
-          : `Käynnistys epäonnistui: ${err && err.message ? err.message : err}`;
-      log(`käynnistysvirhe: ${err && err.name ? err.name + ': ' : ''}${err && err.message ? err.message : err}`);
+          ? 'No microphone found.'
+          : `Startup failed: ${err && err.message ? err.message : err}`;
+      log(`startup error: ${err && err.name ? err.name + ': ' : ''}${err && err.message ? err.message : err}`);
     }
   }
 
   async function fetchWasm() {
     const response = await fetch('./soundpaste.wasm', { cache: 'no-cache' });
-    if (!response.ok) throw new Error(`modeemin lataus epäonnistui (${response.status})`);
+    if (!response.ok) throw new Error(`loading the modem failed (${response.status})`);
     return response.arrayBuffer();
   }
 
   function loadWasm(buffer) {
     const seed = crypto.getRandomValues(new Uint32Array(2));
-    const flags = params.get('kattely') === '1' ? 1 : 0;
+    const flags = params.get('handshake') === '1' ? 1 : 0;
     app.node.port.postMessage({ type: 'load', wasm: buffer, seed: [seed[0], seed[1]], flags }, [buffer]);
   }
 
@@ -141,7 +141,7 @@
     log(message);
   }
 
-  // ------------------------------------------------------------------ viestit äänisäikeeltä
+  // ------------------------------------------------------------------ messages from the audio thread
 
   function onWorkletMessage(m) {
     switch (m.type) {
@@ -152,7 +152,7 @@
         $('start-section').hidden = true;
         for (const id of ['meter-section', 'send-section', 'receive-section']) $(id).hidden = false;
         $('download').disabled = false;
-        log(`modeemi valmis: ${m.sampleRate} Hz, viestin enimmäispituus ${m.maxMessage} tavua`);
+        log(`modem ready: ${m.sampleRate} Hz, maximum message length ${m.maxMessage} bytes`);
         updateInput();
         setSending(false);
         emit({ kind: 'ready', sampleRate: m.sampleRate });
@@ -172,7 +172,7 @@
       case 'sendResult':
         if (m.code !== 0) {
           setSending(false);
-          setTx(m.code === 1 ? 'Edellinen lähetys on vielä kesken.' : 'Viesti on liian pitkä.', false);
+          setTx(m.code === 1 ? 'The previous send is still in progress.' : 'The message is too long.', false);
         }
         break;
       case 'recording': {
@@ -182,60 +182,60 @@
         break;
       }
       case 'error':
-        log(`virhe äänisäikeessä: ${m.message}`);
-        if (!app.ready) fatal(`Modeemin käynnistys epäonnistui: ${m.message}`);
+        log(`error on the audio thread: ${m.message}`);
+        if (!app.ready) fatal(`Starting the modem failed: ${m.message}`);
         break;
     }
   }
 
   const FAIL_TEXT = [
-    'Vastaanottajaa ei löytynyt.',
-    'Vastaanottaja lakkasi vastaamasta kesken siirron.',
-    'Siirto ei onnistunut uudelleenyrityksistä huolimatta.',
-    'Vastaanottaja kuittasi eri sisällön kuin lähetettiin.',
+    'No receiver found.',
+    'The receiver stopped responding during the transfer.',
+    'The transfer failed despite retries.',
+    'The receiver acknowledged different content than was sent.',
   ];
   const FAIL_ADVICE = [
-    'Varmista, että toisella koneella tämä sivu on auki ja Aloita on painettu, että koneet ovat lähekkäin ja että äänet ovat päällä. Kokeile lisätä äänenvoimakkuutta.',
-    'Kokeile uudelleen. Jos ongelma toistuu, siirrä koneet lähemmäs toisiaan.',
-    'Kokeile uudelleen hiljaisempana hetkenä tai siirrä koneet lähemmäs toisiaan.',
-    'Kokeile uudelleen.',
+    'Check that the other computer has this page open with Start pressed, that the computers are close together and that sound is on. Try turning the volume up.',
+    'Try again. If it keeps happening, move the computers closer together.',
+    'Try again at a quieter moment or move the computers closer together.',
+    'Try again.',
   ];
   const HINT_ADVICE = [
     '',
-    'Signaali on vastaanottajalla liian hiljainen: lisää äänenvoimakkuutta tai siirrä koneet lähemmäs toisiaan.',
-    'Signaali leikkautuu vastaanottajan mikrofonissa: pienennä äänenvoimakkuutta tai siirrä koneet kauemmas toisistaan.',
-    'Taustamelua on liikaa: yritä uudelleen hiljaisempana hetkenä tai siirrä koneet lähemmäs toisiaan.',
+    'The signal is too quiet at the receiver: turn the volume up or move the computers closer together.',
+    'The signal clips in the receiver\'s microphone: turn the volume down or move the computers further apart.',
+    'There is too much background noise: try again at a quieter moment or move the computers closer together.',
   ];
 
   function onEvent(b) {
     const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
     switch (b[0]) {
-      case 1: { // lähetyksen tila
+      case 1: { // send status
         const [sub, a, x, c] = [b[1], dv.getUint32(2, true), dv.getUint32(6, true), dv.getUint32(10, true)];
         const text = [
-          () => 'Kuunnellaan, onko kanava vapaa…',
-          () => `Etsitään vastaanottajaa… (yritys ${a}/${x})`,
-          () => `Lähetetään, kehys ${a}/${x}${c > 1 ? ' (uudelleenlähetys)' : ''}`,
-          () => 'Odotetaan kuittausta…',
-          () => `Kuittausta ei kuulunut, pyydetään uudelleen (${a}/${x})…`,
-          () => `Yritetään uudelleen: vastaanottajalta puuttuu ${a} ${a === 1 ? 'kehys' : 'kehystä'}.`,
-          () => 'Toinen kone lähettää juuri. Oma viesti lähtee heti sen jälkeen.',
+          () => 'Checking that the channel is free…',
+          () => `Looking for a receiver… (attempt ${a}/${x})`,
+          () => `Sending, frame ${a}/${x}${c > 1 ? ' (retransmission)' : ''}`,
+          () => 'Waiting for acknowledgement…',
+          () => `No acknowledgement heard, asking again (${a}/${x})…`,
+          () => `Retrying: the receiver is missing ${a} ${a === 1 ? 'frame' : 'frames'}.`,
+          () => 'The other computer is sending right now. Your message goes out right after.',
         ][sub]();
         setTx(text, false);
         emit({ kind: 'tx', sub, a, b: x, c });
         break;
       }
-      case 2: { // perillä
+      case 2: { // delivered
         const seconds = dv.getUint32(3, true) / 1000;
         setSending(false);
-        setTx(`Perillä (${seconds.toFixed(1).replace('.', ',')} s)`, true);
+        setTx(`Delivered (${seconds.toFixed(1)} s)`, true);
         emit({ kind: 'delivered', seconds });
         break;
       }
-      case 3: { // epäonnistui
+      case 3: { // failed
         const [reason, hint, hasQuality] = [b[1], b[2], b[3]];
         setSending(false);
-        setTx(`Epäonnistui: ${FAIL_TEXT[reason] || 'tuntematon syy.'}`, false);
+        setTx(`Failed: ${FAIL_TEXT[reason] || 'unknown reason.'}`, false);
         const advice = $('tx-advice');
         advice.textContent = HINT_ADVICE[hint] || FAIL_ADVICE[reason] || '';
         advice.hidden = !advice.textContent;
@@ -244,12 +244,12 @@
       }
       case 4:
         setSending(false);
-        setTx('Lähetys peruutettu.', false);
+        setTx('Send cancelled.', false);
         emit({ kind: 'cancelled' });
         break;
-      case 5: { // vastaanotto alkoi
+      case 5: { // receiving started
         const len = dv.getUint32(3, true);
-        $('rx-status').textContent = `Vastaanotetaan viestiä (${len} tavua)…`;
+        $('rx-status').textContent = `Receiving a message (${len} bytes)…`;
         $('rx-status').classList.remove('ok');
         const progress = $('rx-progress');
         progress.hidden = false;
@@ -257,9 +257,9 @@
         emit({ kind: 'rxStarted', len });
         break;
       }
-      case 6: { // edistyminen
+      case 6: { // progress
         const [have, of] = [dv.getUint32(1, true), dv.getUint32(5, true)];
-        $('rx-status').textContent = `Vastaanotetaan: ${have}/${of} kehystä`;
+        $('rx-status').textContent = `Receiving: ${have}/${of} frames`;
         const progress = $('rx-progress');
         progress.hidden = false;
         progress.max = of;
@@ -267,18 +267,18 @@
         emit({ kind: 'rxProgress', have, of });
         break;
       }
-      case 7: { // vastaanotettu
+      case 7: { // received
         const len = dv.getUint32(3, true);
         const bytes = b.subarray(7, 7 + len);
         app.received = decoder.decode(bytes);
         const el = $('received');
-        el.textContent = app.received; // aina pelkkänä tekstinä
+        el.textContent = app.received; // always as plain text
         el.hidden = false;
         $('rx-progress').hidden = true;
         $('copy').hidden = false;
         $('copy-status').textContent = '';
         const status = $('rx-status');
-        status.textContent = len === 0 ? 'Vastaanotettu tyhjä viesti.' : `Vastaanotettu ${len} tavua.`;
+        status.textContent = len === 0 ? 'Received an empty message.' : `Received ${len} bytes.`;
         status.classList.add('ok');
         emit({ kind: 'received', text: app.received, bytes: Array.from(bytes) });
         break;
@@ -286,7 +286,7 @@
       case 8:
         $('rx-progress').hidden = true;
         $('rx-status').classList.remove('ok');
-        $('rx-status').textContent = b[1] === 1 ? 'Lähettäjä peruutti lähetyksen.' : 'Lähettäjästä ei kuulunut enää: keskeneräinen viesti hylättiin.';
+        $('rx-status').textContent = b[1] === 1 ? 'The sender cancelled.' : 'Nothing more was heard from the sender: the incomplete message was discarded.';
         emit({ kind: 'rxAborted', cancelled: b[1] === 1 });
         break;
       case 9:
@@ -295,13 +295,13 @@
     }
   }
 
-  // ------------------------------------------------------------------ lähetys
+  // ------------------------------------------------------------------ sending
 
   function setTx(text, ok) {
     const el = $('tx-status');
     el.textContent = text;
     el.classList.toggle('ok', !!ok);
-    if (text) log(`tila: ${text}`);
+    if (text) log(`status: ${text}`);
     if (ok || !text) $('tx-advice').hidden = true;
   }
 
@@ -315,11 +315,11 @@
   function updateInput() {
     const bytes = encoder.encode($('text').value).length;
     const tooLong = bytes > app.maxMessage;
-    $('count').textContent = `${bytes} / ${app.maxMessage} tavua`;
+    $('count').textContent = `${bytes} / ${app.maxMessage} bytes`;
     const warn = $('too-long');
     warn.hidden = !tooLong;
     if (tooLong) {
-      warn.textContent = `Viesti on liian pitkä: ${bytes} tavua, enimmäispituus on ${app.maxMessage} tavua. Ääkköset ja emojit vievät useamman tavun.`;
+      warn.textContent = `The message is too long: ${bytes} bytes, the maximum is ${app.maxMessage} bytes. Accented letters and emoji take several bytes each.`;
       $('estimate').textContent = '';
     }
     $('send').disabled = !app.ready || app.sending || tooLong;
@@ -328,7 +328,7 @@
 
   function showEstimate(len, seconds) {
     if (encoder.encode($('text').value).length !== len) return;
-    $('estimate').textContent = `Siirto kestää noin ${seconds < 10 ? seconds.toFixed(1).replace('.', ',') : Math.round(seconds)} s`;
+    $('estimate').textContent = `Transfer takes about ${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)} s`;
   }
 
   function send(text) {
@@ -337,13 +337,13 @@
     if (bytes.length > app.maxMessage) return false;
     $('tx-advice').hidden = true;
     setSending(true);
-    setTx('Aloitetaan…', false);
-    log(`lähetetään ${bytes.length} tavua`);
+    setTx('Starting…', false);
+    log(`sending ${bytes.length} bytes`);
     app.node.port.postMessage({ type: 'send', bytes: bytes.buffer }, [bytes.buffer]);
     return true;
   }
 
-  // ------------------------------------------------------------------ signaalitaso
+  // ------------------------------------------------------------------ signal level
 
   function updateMeter(rms, peak) {
     const db = rms > 0 ? 20 * Math.log10(rms) : -100;
@@ -357,19 +357,19 @@
     $('meter-bar').classList.toggle('hot', hot);
     $('meter-peak').style.left = `${pos(app.peakHold)}%`;
     $('meter').setAttribute('aria-valuenow', String(Math.round(Math.max(-80, db))));
-    $('meter-db').textContent = db <= -99 ? 'ei signaalia' : `${db.toFixed(0)} dB`;
+    $('meter-db').textContent = db <= -99 ? 'no signal' : `${db.toFixed(0)} dB`;
     $('meter-hint').textContent = hot
-      ? 'Mikrofoni leikkaa: ääni on liian voimakas.'
+      ? 'The microphone is clipping: the sound is too loud.'
       : db <= -99
-        ? 'Mikrofonista ei tule lainkaan ääntä. Tarkista, ettei mikrofoni ole mykistetty.'
+        ? 'No sound at all from the microphone. Check that it is not muted.'
         : '';
     const s = app.stats;
     if (s && $('debug').open) {
-      $('stats').textContent = `Alkumerkkejä ${s.preambles}, ehjiä kehyksiä ${s.framesOk}, hylättyjä ${s.framesFailed}, lähetettyjä ${s.framesSent}, korjattuja tavuja ${s.corrected}` + (s.framesOk ? `, viimeisin SNR ${s.snrDb.toFixed(0)} dB` : '');
+      $('stats').textContent = `Preambles ${s.preambles}, good frames ${s.framesOk}, rejected ${s.framesFailed}, sent ${s.framesSent}, corrected bytes ${s.corrected}` + (s.framesOk ? `, latest SNR ${s.snrDb.toFixed(0)} dB` : '');
     }
   }
 
-  // ------------------------------------------------------------------ äänite
+  // ------------------------------------------------------------------ recording
 
   function requestRecording() {
     return new Promise((resolve) => {
@@ -413,10 +413,10 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    log(`äänite ladattu: ${(samples.length / sampleRate).toFixed(1)} s, ${sampleRate} Hz`);
+    log(`recording downloaded: ${(samples.length / sampleRate).toFixed(1)} s, ${sampleRate} Hz`);
   }
 
-  // ------------------------------------------------------------------ tapahtumat
+  // ------------------------------------------------------------------ events
 
   $('start').addEventListener('click', start);
   $('text').addEventListener('input', updateInput);
@@ -425,12 +425,12 @@
     if (app.node) app.node.port.postMessage({ type: 'cancel' });
   });
   $('copy').addEventListener('click', async () => {
-    // Leikepöydälle kirjoittaminen vaatii käyttäjän toiminnon, joten se tehdään vain napista.
+    // Writing to the clipboard needs a user gesture, so it only happens from the button.
     try {
       await navigator.clipboard.writeText(app.received);
-      $('copy-status').textContent = 'Kopioitu.';
+      $('copy-status').textContent = 'Copied.';
     } catch (err) {
-      $('copy-status').textContent = 'Kopiointi ei onnistunut. Valitse teksti ja kopioi käsin.';
+      $('copy-status').textContent = 'Copying failed. Select the text and copy it by hand.';
     }
   });
   $('download').addEventListener('click', downloadRecording);
@@ -440,11 +440,11 @@
   });
   document.addEventListener('visibilitychange', () => {
     $('hidden-warning').hidden = !(document.hidden && app.ready);
-    if (app.ready) log(document.hidden ? 'välilehti taustalle' : 'välilehti näkyviin');
+    if (app.ready) log(document.hidden ? 'tab to background' : 'tab visible');
   });
 
-  // Kehitystyökalujen kiinnityskohta. Tuotantosivulla tätä ei käytä mikään,
-  // eikä mikään tässä tiedostossa ota yhteyttä verkkoon.
+  // Hook for the dev tools. Nothing uses this on the production page,
+  // and nothing in this file contacts the network.
   window.soundpaste = {
     start,
     send,

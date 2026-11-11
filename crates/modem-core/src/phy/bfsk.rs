@@ -1,17 +1,17 @@
-//! v0: karkea 2-FSK-modeemi kehityssyklin pystyttämistä varten.
+//! v0: crude 2-FSK modem for setting up the development cycle.
 //!
-//! Tarkoituksella yksinkertaisin toimiva ratkaisu, ei hyvä modeemi:
-//! - kaksi taajuutta (0 = 2000 Hz, 1 = 3000 Hz), 100 symbolia sekunnissa
-//! - ei virheenkorjausta, vain CRC-16
-//! - synkronointi: vuorotteleva 1010...-alkumerkki ja 16-bittinen tahdistussana
+//! Deliberately the simplest thing that works, not a good modem:
+//! - two frequencies (0 = 2000 Hz, 1 = 3000 Hz), 100 symbols per second
+//! - no error correction, only CRC-16
+//! - synchronisation: alternating 1010... preamble and a 16-bit sync word
 //!
-//! Kehys bitteinä (MSB ensin):
-//! `alkumerkki 32 b | tahdistussana 16 b | pituus 8 b | data | CRC-16`
+//! Frame in bits (MSB first):
+//! `preamble 32 b | sync word 16 b | length 8 b | data | CRC-16`
 //!
-//! Vastaanotin laskee kummankin taajuuden tehon yhden symbolin mittaisessa
-//! liukuvassa ikkunassa ja tekee bittipäätöksen kahdeksassa eri vaiheessa
-//! symbolia kohti. Vaihe, jossa tahdistussana löytyy suurimmalla marginaalilla,
-//! lukitaan kehyksen ajaksi.
+//! The receiver computes the power of both frequencies in a sliding window
+//! one symbol long and makes the bit decision at eight different phases
+//! per symbol. The phase where the sync word is found with the largest margin
+//! is locked for the duration of the frame.
 
 use super::{Demodulator, FailReason, Modulator, PhyEvent, RxStats};
 use crate::crc::crc16;
@@ -48,7 +48,7 @@ impl BfskModulator {
                 bits.push(b >> i & 1 == 1);
             }
         }
-        // Kaksi täytebittiä, jotta viimeisen oikean symbolin ikkuna ei osu häntään.
+        // Two padding bits so that the window of the last real symbol does not fall on the tail.
         bits.push(false);
         bits.push(true);
         bits
@@ -73,7 +73,7 @@ impl Modulator for BfskModulator {
         let bits = self.bits(payload);
         let total = (bits.len() as f64 * self.fs / BAUD).round() as usize;
         let mut out = Vec::with_capacity(total);
-        // Jatkuvavaiheinen FSK: vaihe ei hyppää symbolirajalla, joten spektri pysyy kapeana.
+        // Continuous-phase FSK: the phase does not jump at symbol boundaries, so the spectrum stays narrow.
         let mut phase = 0.0f64;
         for n in 0..total {
             let sym = ((n as f64 * BAUD / self.fs) as usize).min(bits.len() - 1);
@@ -81,7 +81,7 @@ impl Modulator for BfskModulator {
             phase += std::f64::consts::TAU * f / self.fs;
             out.push(phase.sin() as f32 * AMPLITUDE);
         }
-        // Pehmeä alku ja loppu (5 ms), jotta kaiutin ei naksahda.
+        // Soft start and end (5 ms) so the speaker does not click.
         let ramp = (0.005 * self.fs) as usize;
         for i in 0..ramp.min(total / 2) {
             let g = 0.5 - 0.5 * (std::f32::consts::PI * i as f32 / ramp as f32).cos();
@@ -98,7 +98,7 @@ impl Modulator for BfskModulator {
 
 enum State {
     Search,
-    /// Tahdistussana löytyi jostakin vaiheesta; odotetaan loput vaiheet ja valitaan paras.
+    /// The sync word was found at some phase; wait for the remaining phases and pick the best.
     Choosing { best_phase: usize, best_quality: f32, hops_left: usize },
     Locked { phase: usize, bits: Vec<bool>, need: Option<usize> },
 }
@@ -114,7 +114,7 @@ pub struct BfskDemodulator {
     margins: [[f32; 16]; PHASES],
     margin_pos: [usize; PHASES],
     state: State,
-    // Kehyksen aikaiset tilastot.
+    // Statistics during the frame.
     start: u64,
     sum_sq: f64,
     clipped: u64,
@@ -161,7 +161,7 @@ impl BfskDemodulator {
 
     fn lock(&mut self, phase: usize, events: &mut Vec<PhyEvent>) {
         self.state = State::Locked { phase, bits: Vec::new(), need: None };
-        // Alkumerkki ja tahdistussana ovat jo menneet: 48 symbolia taaksepäin.
+        // The preamble and sync word have already passed: 48 symbols back.
         let back = (48.0 * self.hop_len * PHASES as f64) as u64;
         self.start = self.n.saturating_sub(back);
         self.sum_sq = 0.0;
@@ -178,7 +178,7 @@ impl BfskDemodulator {
         let bit = e1 > e0;
         let margin = (e1 - e0).abs() / (e1 + e0 + 1e-20);
 
-        // Haku: jokainen vaihe pitää omaa siirtorekisteriään.
+        // Search: every phase keeps its own shift register.
         if matches!(self.state, State::Search | State::Choosing { .. }) {
             self.reg[p] = (self.reg[p] << 1) | bit as u32;
             self.margins[p][self.margin_pos[p]] = margin;
@@ -282,7 +282,7 @@ mod tests {
     fn clean_roundtrip_at_both_rates() {
         for fs in [44100.0, 48000.0] {
             let m = BfskModulator::new(fs);
-            let payload = "https://sairanen.org/ ääkköset 🎵".as_bytes();
+            let payload = "https://sairanen.org/ café niño 🎵".as_bytes();
             let mut x = vec![0.0; 1234];
             x.extend(m.modulate(payload));
             x.extend(vec![0.0; 5000]);
@@ -310,14 +310,14 @@ mod tests {
     fn two_frames_back_to_back() {
         let fs = 48000.0;
         let m = BfskModulator::new(fs);
-        let mut x = m.modulate(b"eka");
+        let mut x = m.modulate(b"one");
         x.extend(vec![0.0; 4800]);
-        x.extend(m.modulate(b"toka"));
+        x.extend(m.modulate(b"more"));
         x.extend(vec![0.0; 4800]);
         let frames: Vec<Vec<u8>> = decode_all(fs, &x, 4096)
             .into_iter()
             .filter_map(|e| if let PhyEvent::Frame { payload, .. } = e { Some(payload) } else { None })
             .collect();
-        assert_eq!(frames, vec![b"eka".to_vec(), b"toka".to_vec()]);
+        assert_eq!(frames, vec![b"one".to_vec(), b"more".to_vec()]);
     }
 }

@@ -1,25 +1,25 @@
-//! Asema: modeemi ja linkkikerros yhdessä äänilohkojen käsittelijänä.
+//! Station: modem and link layer together as a processor of audio blocks.
 //!
-//! [`Station::process`] saa mikrofonin näytelohkon ja täyttää kaiuttimen
-//! näytelohkon. Kaikki muu (vastaanotin, tilakone, lähetteen muodostus)
-//! tapahtuu sen sisällä. Aika on käsiteltyjen näytteiden määrä, joten asema
-//! toimii samalla tavalla selaimen AudioWorkletissa, komentorivillä ja
-//! simulaattorissa.
+//! [`Station::process`] takes a block of microphone samples and fills a block of
+//! speaker samples. Everything else (receiver, state machine, building the transmission)
+//! happens inside it. Time is the number of samples processed, so the station
+//! works the same way in the browser's AudioWorklet, on the command line and
+//! in the simulator.
 
 use crate::link::{Action, Event, Link, LinkConfig, Quality, SendError};
 use crate::phy::{Demodulator, Modulator, PhyEvent, PhyKind};
 use std::collections::VecDeque;
 
-/// Fyysisen kerroksen laskurit vianetsintään ja mittauksiin.
+/// Physical layer counters for debugging and measurements.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StationStats {
     pub preambles: u32,
     pub frames_ok: u32,
     pub frames_failed: u32,
     pub frames_sent: u32,
-    /// Virheenkorjauksen korjaamat tavut yhteensä.
+    /// Total bytes corrected by error correction.
     pub corrected: u32,
-    /// Viimeisimmän ehjän kehyksen laatu.
+    /// Quality of the latest intact frame.
     pub last_snr_db: f32,
     pub last_rms: f32,
 }
@@ -29,14 +29,14 @@ pub struct Station {
     link: Link,
     modulator: Box<dyn Modulator>,
     demod: Box<dyn Demodulator>,
-    /// Soittoa odottavat näytteet.
+    /// Samples waiting to be played.
     tx: VecDeque<f32>,
     transmitting: bool,
     n: u64,
     events: VecDeque<Event>,
     phy_events: Vec<PhyEvent>,
     stats: StationStats,
-    /// Tulotason mittari: liukuva tehollisarvo (noin 100 ms) ja huippu.
+    /// Input level meter: sliding RMS (about 100 ms) and peak.
     level_sq: f32,
     peak: f32,
 }
@@ -71,13 +71,13 @@ impl Station {
         self.fs
     }
 
-    /// Aloita viestin lähetys.
+    /// Start sending a message.
     pub fn send(&mut self, data: &[u8]) -> Result<u16, SendError> {
         let now = self.now_ms();
         self.link.send(now, data)
     }
 
-    /// Peruuta käynnissä oleva lähetys.
+    /// Cancel the transmission in progress.
     pub fn cancel(&mut self) {
         let now = self.now_ms();
         self.link.cancel(now);
@@ -100,7 +100,7 @@ impl Station {
         self.stats
     }
 
-    /// Mikrofonin taso: (tehollisarvo, huippu viimeisimmässä lohkossa).
+    /// Microphone level: (RMS, peak in the latest block).
     pub fn input_level(&self) -> (f32, f32) {
         (self.level_sq.sqrt(), self.peak)
     }
@@ -109,7 +109,7 @@ impl Station {
         self.link.config().max_message
     }
 
-    /// Arvio siirron kestosta sekunteina, kun kaikki onnistuu ensimmäisellä kerralla.
+    /// Estimate of the transfer duration in seconds when everything succeeds on the first try.
     pub fn estimate_seconds(&self, len: usize) -> f64 {
         let cfg = self.link.config();
         let turn = (cfg.response_delay + 200) as f64 / 1000.0;
@@ -141,11 +141,11 @@ impl Station {
         }
     }
 
-    /// Käsittele yksi äänilohko: `input` mikrofonista, `output` kaiuttimeen.
-    /// Lohkot ovat yhtä pitkät.
+    /// Process one audio block: `input` from the microphone, `output` to the speaker.
+    /// The blocks are the same length.
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), output.len());
-        // Tulotason mittari.
+        // Input level meter.
         if !input.is_empty() {
             let sq = input.iter().map(|v| v * v).sum::<f32>() / input.len() as f32;
             let a = (input.len() as f32 / (0.1 * self.fs as f32)).min(1.0);
@@ -173,18 +173,18 @@ impl Station {
                 }
                 PhyEvent::Failed { reason, stats, .. } => {
                     self.stats.frames_failed += 1;
-                    // Vianetsintään: hylätyt kehykset näkyvät lokissa tasoineen.
+                    // For debugging: rejected frames show up in the log with their levels.
                     self.events.push_back(Event::Log(format!(
-                        "<- kehys hylätty ({}), snr={:.0} dB taso={:.0} dBFS leikkautunut={:.0} %",
+                        "<- frame rejected ({}), snr={:.0} dB level={:.0} dBFS clipped={:.0} %",
                         match reason {
-                            crate::phy::FailReason::Header => "otsake",
-                            crate::phy::FailReason::Checksum => "tarkistussumma",
+                            crate::phy::FailReason::Header => "header",
+                            crate::phy::FailReason::Checksum => "checksum",
                         },
                         stats.snr_db,
                         20.0 * stats.rms.max(1e-7).log10(),
                         stats.clipped * 100.0
                     )));
-                    // Vain kehys, jonka otsake purkautui, on varmasti oikea lähetys.
+                    // Only a frame whose header decoded is certainly a real transmission.
                     if reason == crate::phy::FailReason::Checksum {
                         self.link.on_rx_failed(now);
                     }

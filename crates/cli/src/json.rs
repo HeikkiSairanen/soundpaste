@@ -1,4 +1,4 @@
-//! Pieni JSON-kirjoittaja ja -jäsennin mittaustuloksia varten (ei riippuvuuksia).
+//! A small JSON writer and parser for bench results (no dependencies).
 
 use std::fmt::Write;
 
@@ -22,7 +22,7 @@ impl Json {
     pub fn num(v: impl Into<f64>) -> Json {
         Json::Num(v.into())
     }
-    /// NaN ja äärettömät eivät ole JSONia; ne tallennetaan nullina.
+    /// NaN and infinities are not JSON; they are stored as null.
     pub fn opt(v: Option<f64>) -> Json {
         match v {
             Some(x) if x.is_finite() => Json::Num(x),
@@ -152,7 +152,7 @@ impl Json {
         let v = p.value()?;
         p.ws();
         if p.i != p.b.len() {
-            return Err(format!("ylimääräistä sisältöä kohdassa {}", p.i));
+            return Err(format!("trailing content at {}", p.i));
         }
         Ok(v)
     }
@@ -175,7 +175,7 @@ impl Parser<'_> {
             self.i += 1;
             Ok(())
         } else {
-            Err(format!("odotettiin '{}' kohdassa {}", c as char, self.i))
+            Err(format!("expected '{}' at {}", c as char, self.i))
         }
     }
     fn value(&mut self) -> Result<Json, String> {
@@ -201,7 +201,7 @@ impl Parser<'_> {
                             self.i += 1;
                             return Ok(Json::Obj(pairs));
                         }
-                        _ => return Err(format!("virheellinen olio kohdassa {}", self.i)),
+                        _ => return Err(format!("invalid object at {}", self.i)),
                     }
                 }
             }
@@ -222,7 +222,7 @@ impl Parser<'_> {
                             self.i += 1;
                             return Ok(Json::Arr(items));
                         }
-                        _ => return Err(format!("virheellinen taulukko kohdassa {}", self.i)),
+                        _ => return Err(format!("invalid array at {}", self.i)),
                     }
                 }
             }
@@ -248,27 +248,27 @@ impl Parser<'_> {
                     .ok()
                     .and_then(|s| s.parse::<f64>().ok())
                     .map(Json::Num)
-                    .ok_or_else(|| format!("virheellinen arvo kohdassa {start}"))
+                    .ok_or_else(|| format!("invalid value at {start}"))
             }
-            None => Err("odottamaton loppu".into()),
+            None => Err("unexpected end".into()),
         }
     }
     fn string(&mut self) -> Result<String, String> {
         if self.b.get(self.i) != Some(&b'"') {
-            return Err(format!("odotettiin merkkijonoa kohdassa {}", self.i));
+            return Err(format!("expected a string at {}", self.i));
         }
         self.i += 1;
         let mut out = Vec::new();
         loop {
             match self.b.get(self.i).copied() {
-                None => return Err("merkkijono katkeaa".into()),
+                None => return Err("unterminated string".into()),
                 Some(b'"') => {
                     self.i += 1;
                     return String::from_utf8(out).map_err(|e| e.to_string());
                 }
                 Some(b'\\') => {
                     self.i += 1;
-                    let c = self.b.get(self.i).copied().ok_or("merkkijono katkeaa")?;
+                    let c = self.b.get(self.i).copied().ok_or("unterminated string")?;
                     self.i += 1;
                     match c {
                         b'n' => out.push(b'\n'),
@@ -300,10 +300,10 @@ mod tests {
     #[test]
     fn roundtrip() {
         let v = Json::obj(vec![
-            ("nimi", Json::str("ääni \"x\"\n")),
-            ("luku", Json::num(-3.25)),
-            ("tyhjä", Json::Null),
-            ("lista", Json::Arr(vec![Json::num(1), Json::Bool(true), Json::obj(vec![("a", Json::Arr(vec![]))])])),
+            ("name", Json::str("café \"x\"\n")),
+            ("number", Json::num(-3.25)),
+            ("empty", Json::Null),
+            ("list", Json::Arr(vec![Json::num(1), Json::Bool(true), Json::obj(vec![("a", Json::Arr(vec![]))])])),
         ]);
         assert_eq!(Json::parse(&v.pretty()).unwrap(), v);
     }

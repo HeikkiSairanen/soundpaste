@@ -1,28 +1,28 @@
-//! Reed–Solomon-virheenkorjaus kunnassa GF(256).
+//! Reed–Solomon error correction over the field GF(256).
 //!
-//! Koodisana on `data | pariteetti`, ja p pariteettitavulla voidaan korjata
-//! e virheellistä tavua ja f pyyhkiytymää (tavu, jonka paikka tiedetään
-//! epäluotettavaksi), kun 2e + f <= p. Koodi on lyhennetty: koodisanan pituus
-//! saa olla mikä tahansa enintään 255.
+//! A codeword is `data | parity`, and p parity bytes can correct
+//! e erroneous bytes and f erasures (a byte whose position is known to be
+//! unreliable) when 2e + f <= p. The code is shortened: the codeword length
+//! can be anything up to 255.
 //!
-//! Miksi Reed–Solomon: akustisen kanavan virheet tulevat ryöppyinä (kolahdus,
-//! häipyvä sävel), ja RS korjaa kokonaisia tavuja riippumatta siitä, moniko
-//! bitti tavussa on pielessä.
+//! Why Reed–Solomon: errors on the acoustic channel come in bursts (a thump,
+//! a fading tone), and RS corrects whole bytes regardless of how many
+//! bits in the byte are wrong.
 //!
-//! Toteutus vaiheittain:
-//! 1. syndroomat S_j = c(α^j): kaikki nollia, jos koodisana on ehjä
-//! 2. Berlekamp–Massey etsii virheenpaikannuspolynomin Λ(x), jonka juuret
-//!    kertovat virheiden paikat (pyyhkiytymät annetaan alkuarvona)
-//! 3. Chienin haku kokeilee jokaisen paikan
-//! 4. Forneyn kaava laskee virheiden arvot
+//! The implementation step by step:
+//! 1. syndromes S_j = c(α^j): all zero if the codeword is intact
+//! 2. Berlekamp–Massey finds the error locator polynomial Λ(x), whose roots
+//!    give the error positions (erasures are given as the initial value)
+//! 3. Chien search tries every position
+//! 4. Forney's formula computes the error values
 //!
-//! Kunta: alkiot ovat tavuja, yhteenlasku on XOR ja kertolasku tehdään
-//! polynomien kertolaskuna modulo x^8 + x^4 + x^3 + x^2 + 1 (0x11D).
-//! Kertolasku toteutetaan logaritmitauluilla: a·b = exp(log a + log b).
+//! The field: elements are bytes, addition is XOR and multiplication is
+//! polynomial multiplication modulo x^8 + x^4 + x^3 + x^2 + 1 (0x11D).
+//! Multiplication is implemented with log tables: a·b = exp(log a + log b).
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RsError {
-    /// Virheitä on enemmän kuin pariteetti riittää korjaamaan.
+    /// There are more errors than the parity can correct.
     TooManyErrors,
 }
 
@@ -75,7 +75,7 @@ impl Gf {
     fn inv(&self, a: u8) -> u8 {
         self.exp[255 - self.log[a as usize] as usize]
     }
-    /// Polynomin arvo pisteessä x; kertoimet pienimmästä asteesta alkaen.
+    /// Value of a polynomial at x; coefficients from the lowest degree up.
     fn eval(&self, poly: &[u8], x: u8) -> u8 {
         poly.iter().rev().fold(0, |acc, &c| self.mul(acc, x) ^ c)
     }
@@ -84,7 +84,7 @@ impl Gf {
 pub struct ReedSolomon {
     gf: Gf,
     parity: usize,
-    /// Generaattoripolynomi g(x) = Π (x - α^i), i = 0..p-1; kertoimet korkeimmasta asteesta.
+    /// Generator polynomial g(x) = Π (x - α^i), i = 0..p-1; coefficients from the highest degree.
     generator: Vec<u8>,
 }
 
@@ -94,7 +94,7 @@ impl ReedSolomon {
         let gf = Gf::new();
         let mut generator = vec![1u8];
         for i in 0..parity {
-            // Kerrotaan (x - α^i):llä; vähennys on sama kuin yhteenlasku (XOR).
+            // Multiply by (x - α^i); subtraction is the same as addition (XOR).
             let root = gf.pow_alpha(i);
             let mut next = vec![0u8; generator.len() + 1];
             for (j, &c) in generator.iter().enumerate() {
@@ -110,9 +110,9 @@ impl ReedSolomon {
         self.parity
     }
 
-    /// Laske pariteettitavut: (data(x)·x^p) mod g(x).
+    /// Compute the parity bytes: (data(x)·x^p) mod g(x).
     pub fn encode(&self, data: &[u8]) -> Vec<u8> {
-        assert!(data.len() + self.parity <= 255, "koodisana saa olla enintään 255 tavua");
+        assert!(data.len() + self.parity <= 255, "a codeword can be at most 255 bytes");
         let mut rem = vec![0u8; self.parity];
         for &d in data {
             let factor = d ^ rem[0];
@@ -127,9 +127,9 @@ impl ReedSolomon {
         rem
     }
 
-    /// Korjaa koodisana (data + pariteetti) paikallaan. `erasures` on lista
-    /// epäluotettaviksi tiedettyjen tavujen indekseistä. Palauttaa muutettujen
-    /// tavujen määrän.
+    /// Correct a codeword (data + parity) in place. `erasures` is a list of
+    /// indices of bytes known to be unreliable. Returns the number of
+    /// bytes changed.
     pub fn decode(&self, codeword: &mut [u8], erasures: &[usize]) -> Result<usize, RsError> {
         let gf = &self.gf;
         let n = codeword.len();
@@ -142,10 +142,10 @@ impl ReedSolomon {
         if syndromes.iter().all(|&s| s == 0) {
             return Ok(0);
         }
-        // Paikan i (tavun indeksi) paikannusluku on X = α^(n-1-i).
+        // The locator of position i (byte index) is X = α^(n-1-i).
         let locator_of = |i: usize| gf.pow_alpha(n - 1 - i);
 
-        // Pyyhkiytymien paikannuspolynomi Γ(x) = Π (1 - X_k·x).
+        // Erasure locator polynomial Γ(x) = Π (1 - X_k·x).
         let mut lambda = vec![1u8];
         for &e in erasures {
             if e >= n {
@@ -160,7 +160,7 @@ impl ReedSolomon {
             lambda = next;
         }
 
-        // Berlekamp–Massey, alkuarvona Γ.
+        // Berlekamp–Massey, with Γ as the initial value.
         let rho = erasures.len();
         let mut prev = lambda.clone();
         let mut l = rho;
@@ -201,7 +201,7 @@ impl ReedSolomon {
             return Err(RsError::TooManyErrors);
         }
 
-        // Chienin haku: paikka i on virheellinen, jos Λ(X_i^-1) = 0.
+        // Chien search: position i is in error if Λ(X_i^-1) = 0.
         let mut positions = Vec::with_capacity(degree);
         for i in 0..n {
             if gf.eval(&lambda, gf.inv(locator_of(i))) == 0 {
@@ -212,7 +212,7 @@ impl ReedSolomon {
             return Err(RsError::TooManyErrors);
         }
 
-        // Forney: Ω(x) = S(x)·Λ(x) mod x^p, virheen arvo e = X·Ω(X^-1) / Λ'(X^-1).
+        // Forney: Ω(x) = S(x)·Λ(x) mod x^p, error value e = X·Ω(X^-1) / Λ'(X^-1).
         let mut omega = vec![0u8; p];
         for (i, &s) in syndromes.iter().enumerate() {
             for (j, &c) in lambda.iter().enumerate() {
@@ -221,7 +221,7 @@ impl ReedSolomon {
                 }
             }
         }
-        // Muodollinen derivaatta: kunnassa, jonka karakteristika on 2, parilliset termit häviävät.
+        // Formal derivative: in a field of characteristic 2 the even terms vanish.
         let derivative: Vec<u8> = (1..lambda.len()).map(|j| if j % 2 == 1 { lambda[j] } else { 0 }).collect();
         let mut changed = 0;
         for &i in &positions {
@@ -237,7 +237,7 @@ impl ReedSolomon {
                 changed += 1;
             }
         }
-        // Varmistus: korjatun sanan syndroomien pitää olla nollia.
+        // Check: the syndromes of the corrected word must be zero.
         if self.syndromes(codeword).iter().any(|&s| s != 0) {
             return Err(RsError::TooManyErrors);
         }
@@ -261,8 +261,8 @@ mod tests {
             assert_eq!(gf.mul(a, gf.inv(a)), 1);
             assert_eq!(gf.div(gf.mul(a, 0x53), 0x53), a);
         }
-        // Tunnettu esimerkki: 0x53 · 0xCA = 0x01 AES-kunnassa, mutta meidän
-        // polynomillamme (0x11D) α = 2 ja α^8 = 0x1D.
+        // A known example: 0x53 · 0xCA = 0x01 in the AES field, but with our
+        // polynomial (0x11D) α = 2 and α^8 = 0x1D.
         assert_eq!(gf.pow_alpha(8), 0x1D);
     }
 
@@ -288,7 +288,7 @@ mod tests {
             let mut cw = data.clone();
             cw.extend(rs.encode(&data));
             let n = cw.len();
-            // Satunnainen määrä pyyhkiytymiä ja virheitä kapasiteetin rajoissa.
+            // A random number of erasures and errors within capacity.
             let erasures_n = (rng.below(parity as u64 + 1) as usize).min(n);
             let errors_n = (rng.below(((parity - erasures_n) / 2) as u64 + 1) as usize).min(n - erasures_n);
             let mut idx: Vec<usize> = (0..n).collect();
@@ -309,10 +309,10 @@ mod tests {
 
     #[test]
     fn too_many_errors_are_reported_or_miscorrected_to_valid_codeword() {
-        // Kapasiteetin ylittyessä dekooderi joko ilmoittaa virheestä tai
-        // (harvoin) päätyy toiseen kelvolliseen koodisanaan. Siksi kehyksessä on
-        // lisäksi CRC. Tässä varmistetaan, ettei mikään kaadu ja että ilmoitus
-        // on yleisin lopputulos.
+        // When capacity is exceeded the decoder either reports an error or
+        // (rarely) ends up at another valid codeword. That is why the frame also
+        // has a CRC. Here we check that nothing crashes and that reporting
+        // is the most common outcome.
         let mut rng = Rng::new(7);
         let rs = ReedSolomon::new(8);
         let mut reported = 0;

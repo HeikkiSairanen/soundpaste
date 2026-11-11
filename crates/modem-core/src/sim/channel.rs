@@ -1,4 +1,4 @@
-//! Yksi äänipolku kaiuttimesta mikrofoniin sekä yksisuuntaisen siirron apufunktio.
+//! One audio path from speaker to microphone, plus a helper for one-way transfer.
 
 use super::noise::{Interference, InterferencePlayer, NoiseKind, NoiseSource};
 use crate::dsp::conv::Convolver;
@@ -8,17 +8,17 @@ use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
 pub struct PathConfig {
-    /// Lähettimen nimellinen näytteenottotaajuus.
+    /// Nominal sample rate of the transmitter.
     pub fs_tx: f64,
-    /// Vastaanottimen nimellinen näytteenottotaajuus.
+    /// Nominal sample rate of the receiver.
     pub fs_rx: f64,
-    /// Vastaanottimen kellon virhe miljoonasosina suhteessa lähettimeen.
+    /// Receiver clock error in parts per million relative to the transmitter.
     pub clock_ppm: f64,
-    /// Huoneen impulssivaste vastaanottimen taajuudella. Tyhjä = ei kaikua.
+    /// Room impulse response at the receiver's rate. Empty = no echo.
     pub ir: Vec<f32>,
-    /// Lineaarinen vahvistus (vaimennus < 1).
+    /// Linear gain (attenuation < 1).
     pub gain: f32,
-    /// Kiinteä viive sekunteina (äänen kulkuaika ja laitteiden puskurit).
+    /// Fixed delay in seconds (sound travel time and device buffers).
     pub delay_s: f64,
 }
 
@@ -28,7 +28,7 @@ impl PathConfig {
     }
 }
 
-/// Virtaava äänipolku. Lähtönäytteiden määrä seuraa taajuussuhdetta.
+/// Streaming audio path. The number of output samples follows the rate ratio.
 pub struct Path {
     resampler: Resampler,
     convolver: Convolver,
@@ -40,12 +40,12 @@ pub struct Path {
 
 impl Path {
     pub fn new(cfg: &PathConfig) -> Self {
-        // Jos vastaanottimen kello käy nopeammin, se ottaa enemmän näytteitä samasta äänestä.
+        // If the receiver's clock runs faster, it takes more samples of the same sound.
         let fs_rx_actual = cfg.fs_rx * (1.0 + cfg.clock_ppm * 1e-6);
         let ir: &[f32] = if cfg.ir.is_empty() { &[1.0] } else { &cfg.ir };
         let convolver = Convolver::new(ir);
         let want = (cfg.delay_s * cfg.fs_rx).round() as usize;
-        // Konvoluution oma puskurointiviive luetaan mukaan pyydettyyn viiveeseen.
+        // The convolution's own buffering delay counts towards the requested delay.
         let extra = want.saturating_sub(convolver.latency());
         Path {
             resampler: Resampler::new(cfg.fs_tx, fs_rx_actual),
@@ -69,21 +69,21 @@ impl Path {
     }
 }
 
-/// Yksisuuntaisen siirron asetukset: yksi lähetys, yksi vastaanotin.
+/// Settings for a one-way transfer: one transmission, one receiver.
 #[derive(Clone, Debug)]
 pub struct OneWay {
     pub fs_tx: f64,
     pub fs_rx: f64,
     pub clock_ppm: f64,
     pub ir: Vec<f32>,
-    /// Signaali-kohinasuhde mikrofonissa (dB). Molemmat tehot mitataan koko
-    /// kaistalta 0..fs/2 ja signaalin teho lähetyksen ajalta kaiun jälkeen.
+    /// Signal-to-noise ratio at the microphone (dB). Both powers are measured over the whole
+    /// band 0..fs/2, and the signal power over the duration of the transmission after the echo.
     pub snr_db: f64,
     pub noise: NoiseKind,
-    /// Signaalin tehollisarvo mikrofonissa (täysi asteikko 1.0). Pieni arvo
-    /// mallintaa vaimennusta, suuri (> ~0,5) leikkautumista.
+    /// Signal RMS at the microphone (full scale 1.0). A small value
+    /// models attenuation, a large one (> ~0.5) clipping.
     pub rx_level: f32,
-    /// Hiljaisuus ennen lähetystä ja sen jälkeen.
+    /// Silence before and after the transmission.
     pub lead_s: f64,
     pub tail_s: f64,
     pub interference: Vec<Interference>,
@@ -106,7 +106,7 @@ impl OneWay {
     }
 }
 
-/// Vie lähetyksen kanavan läpi ja palauta mikrofonisignaali.
+/// Pass the transmission through the channel and return the microphone signal.
 pub fn run_oneway(tx: &[f32], cfg: &OneWay, seed: u64) -> Vec<f32> {
     let mut rng = Rng::new(seed);
     let mut path = Path::new(&PathConfig {
@@ -126,7 +126,7 @@ pub fn run_oneway(tx: &[f32], cfg: &OneWay, seed: u64) -> Vec<f32> {
     for chunk in input.chunks(4096) {
         path.process(chunk, &mut rx);
     }
-    // Signaalin teho lähetyksen keston ajalta (ei hiljaisia reunoja).
+    // Signal power over the duration of the transmission (no silent edges).
     let active = tx.len() as f64 / cfg.fs_tx;
     let energy: f64 = rx.iter().map(|&v| (v as f64) * (v as f64)).sum();
     let sig_rms = (energy / (active * cfg.fs_rx).max(1.0)).sqrt().max(1e-12);
@@ -174,7 +174,7 @@ mod tests {
         p.process(&x, &mut y);
         assert!((y.len() as i64 - 48000).abs() < 40);
         let peak = y.iter().enumerate().max_by(|a, b| a.1.abs().total_cmp(&b.1.abs())).unwrap().0;
-        // 0,1 s viive + interpolointisuotimen ryhmäviive (muutama näyte).
+        // 0.1 s delay + group delay of the interpolation filter (a few samples).
         assert!((peak as i64 - 4800).abs() < 30, "{peak}");
     }
 }

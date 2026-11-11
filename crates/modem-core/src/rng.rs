@@ -1,7 +1,7 @@
-//! Pieni deterministinen satunnaislukugeneraattori (xoshiro256**, siemennys SplitMix64:llä).
+//! Small deterministic random number generator (xoshiro256**, seeded with SplitMix64).
 //!
-//! Sama siemen tuottaa saman jonon kaikilla alustoilla, joten simulaatiot ja
-//! mittausajot ovat toistettavia. Ei kelpaa kryptografiaan.
+//! The same seed produces the same sequence on every platform, so simulations and
+//! bench runs are repeatable. Not suitable for cryptography.
 
 #[derive(Clone, Debug)]
 pub struct Rng {
@@ -22,7 +22,7 @@ impl Rng {
         Rng { s: [next(), next(), next(), next()], spare_gauss: None }
     }
 
-    /// Johdettu, riippumaton generaattori (esim. jokaiselle simulaation osalle oma).
+    /// Derived, independent generator (e.g. one for each part of a simulation).
     pub fn fork(&mut self, tag: u64) -> Rng {
         Rng::new(self.next_u64() ^ tag.wrapping_mul(0xA24B_AED4_963E_E407))
     }
@@ -44,17 +44,17 @@ impl Rng {
         (self.next_u64() >> 32) as u32
     }
 
-    /// Tasajakauma välillä [0, 1).
+    /// Uniform distribution on [0, 1).
     pub fn uniform(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 * (1.0 / (1u64 << 53) as f64)
     }
 
-    /// Tasajakauma välillä [lo, hi).
+    /// Uniform distribution on [lo, hi).
     pub fn range(&mut self, lo: f64, hi: f64) -> f64 {
         lo + (hi - lo) * self.uniform()
     }
 
-    /// Kokonaisluku välillä [0, n).
+    /// Integer in [0, n).
     pub fn below(&mut self, n: u64) -> u64 {
         if n == 0 {
             return 0;
@@ -62,7 +62,7 @@ impl Rng {
         (self.uniform() * n as f64) as u64 % n
     }
 
-    /// Normaalijakauma N(0, 1), Box–Muller.
+    /// Normal distribution N(0, 1), Box–Muller.
     pub fn gauss(&mut self) -> f32 {
         if let Some(g) = self.spare_gauss.take() {
             return g;

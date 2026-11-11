@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="fi">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Sivu ei ota yhteyttä mihinkään: kaikki ladataan samasta hakemistosta. -->
+<!-- The page contacts nothing: everything is loaded from the same directory. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>soundpaste</title>
@@ -13,20 +13,20 @@
 <main>
   <header>
     <h1>soundpaste</h1>
-    <p class="lead">Siirrä lyhyt teksti viereiselle koneelle äänellä. Avaa tämä sivu molemmilla koneilla ja paina Aloita.</p>
+    <p class="lead">Send a short text to the computer next to you by sound. Open this page on both computers and press Start.</p>
   </header>
 
   <section id="start-section" aria-labelledby="start-title">
-    <h2 id="start-title" class="visually-hidden">Käyttöönotto</h2>
-    <button id="start" class="primary" type="button">Aloita</button>
+    <h2 id="start-title" class="visually-hidden">Setup</h2>
+    <button id="start" class="primary" type="button">Start</button>
     <p id="start-status" class="status" role="status"></p>
   </section>
 
-  <p id="hidden-warning" class="notice warning" hidden>Välilehti on taustalla. Vastaanotto jatkuu, mutta näkymä päivittyy hitaasti. Pidä välilehti näkyvissä siirron ajan.</p>
+  <p id="hidden-warning" class="notice warning" hidden>This tab is in the background. Receiving continues, but the view updates slowly. Keep the tab visible during a transfer.</p>
 
   <section id="meter-section" aria-labelledby="meter-title" hidden>
-    <h2 id="meter-title">Mikrofoni</h2>
-    <div class="meter" role="meter" aria-label="Mikrofonin signaalitaso" aria-valuemin="-80" aria-valuemax="0" aria-valuenow="-80" id="meter">
+    <h2 id="meter-title">Microphone</h2>
+    <div class="meter" role="meter" aria-label="Microphone signal level" aria-valuemin="-80" aria-valuemax="0" aria-valuenow="-80" id="meter">
       <div class="meter-bar" id="meter-bar"></div>
       <div class="meter-peak" id="meter-peak"></div>
     </div>
@@ -34,44 +34,44 @@
   </section>
 
   <section id="send-section" aria-labelledby="send-title" hidden>
-    <h2 id="send-title">Lähetä</h2>
-    <label for="text" class="visually-hidden">Lähetettävä teksti</label>
-    <textarea id="text" rows="3" spellcheck="false" autocomplete="off" placeholder="Linkki, salasana tai muu lyhyt teksti"></textarea>
+    <h2 id="send-title">Send</h2>
+    <label for="text" class="visually-hidden">Text to send</label>
+    <textarea id="text" rows="3" spellcheck="false" autocomplete="off" placeholder="A link, a password or other short text"></textarea>
     <p class="row small">
-      <span id="count">0 / 512 tavua</span>
+      <span id="count">0 / 512 bytes</span>
       <span id="estimate"></span>
     </p>
     <p id="too-long" class="notice error" hidden></p>
     <p class="row">
-      <button id="send" class="primary" type="button" disabled>Lähetä</button>
-      <button id="cancel" type="button" hidden>Peruuta</button>
+      <button id="send" class="primary" type="button" disabled>Send</button>
+      <button id="cancel" type="button" hidden>Cancel</button>
     </p>
     <p id="tx-status" class="status" role="status" aria-live="polite"></p>
     <p id="tx-advice" class="notice error" hidden></p>
   </section>
 
   <section id="receive-section" aria-labelledby="receive-title" hidden>
-    <h2 id="receive-title">Vastaanotettu</h2>
-    <p id="rx-status" class="status" role="status" aria-live="polite">Kuunnellaan…</p>
+    <h2 id="receive-title">Received</h2>
+    <p id="rx-status" class="status" role="status" aria-live="polite">Listening…</p>
     <progress id="rx-progress" max="1" value="0" hidden></progress>
     <pre id="received" hidden></pre>
     <p class="row">
-      <button id="copy" type="button" hidden>Kopioi</button>
+      <button id="copy" type="button" hidden>Copy</button>
       <span id="copy-status" class="small" role="status"></span>
     </p>
   </section>
 
-  <p class="notice">Siirto ei ole salattu. Kaikki lähellä olevat laitteet, jotka kuulevat äänen, voivat vastaanottaa viestin, ja kuka tahansa kuuloetäisyydellä voi lähettää sinulle viestin.</p>
+  <p class="notice">The transfer is not encrypted. Any nearby device that hears the sound can receive the message, and anyone within earshot can send you one.</p>
 
   <details id="debug">
-    <summary>Vianetsintä</summary>
+    <summary>Troubleshooting</summary>
     <p id="stats" class="small"></p>
     <p class="row">
-      <button id="download" type="button" disabled>Lataa mikrofoniäänite (WAV)</button>
-      <button id="clear-log" type="button">Tyhjennä loki</button>
+      <button id="download" type="button" disabled>Download microphone recording (WAV)</button>
+      <button id="clear-log" type="button">Clear log</button>
     </p>
-    <p class="small">Äänitteessä on viimeiset 45 sekuntia mikrofonista. Se pysyy tällä koneella, ellei sitä itse lataa ja jaa.</p>
-    <pre id="log" aria-label="Tapahtumaloki"></pre>
+    <p class="small">The recording holds the last 45 seconds from the microphone. It stays on this computer unless you download and share it yourself.</p>
+    <pre id="log" aria-label="Event log"></pre>
   </details>
 </main>
 <script src="./app.js"></script>

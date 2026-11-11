@@ -7,7 +7,7 @@ edition = "2021"
 version = "0.1.0"
 license = "MIT"
 
-# Signaalinkäsittelytestit ovat tuskallisen hitaita ilman optimointia.
+# Signal-processing tests are painfully slow without optimization.
 [profile.dev]
 opt-level = 2
 
@@ -17,7 +17,7 @@ opt-level = 2
 [profile.release]
 opt-level = 3
 
-# Selainversio: ei pinon purkua paniikissa (pienempi binääri), koko ohjelman optimointi.
+# Browser build: no unwinding on panic (smaller binary), whole-program optimization.
 [profile.wasm]
 inherits = "release"
 panic = "abort"

@@ -1,35 +1,35 @@
-//! Virtaava konvoluutio pitkällä impulssivasteella (tasajakoinen osituskonvoluutio).
+//! Streaming convolution with a long impulse response (uniformly partitioned convolution).
 //!
-//! Huoneen impulssivaste voi olla kymmeniä tuhansia näytteitä. Suora konvoluutio
-//! maksaisi silloin kymmeniä tuhansia kertolaskuja per näyte. Tässä impulssivaste
-//! jaetaan B näytteen osiin, jokainen osa muunnetaan taajuustasoon kerran, ja
-//! tulosignaalin lohkojen spektreistä pidetään viivelinjaa. Jokaista B näytteen
-//! lohkoa kohti tarvitaan yksi FFT, yksi käänteis-FFT ja P spektrikertolaskua.
-//! Lähtöä tulee aina yhtä monta näytettä kuin tuloa, ja viive on tasan B näytettä
-//! (lohkon puskurointi).
+//! A room impulse response can be tens of thousands of samples. Direct convolution
+//! would then cost tens of thousands of multiplications per sample. Here the impulse response
+//! is split into parts of B samples, each part is transformed to the frequency domain once, and
+//! a delay line of the spectra of the input blocks is kept. Each block of B samples
+//! needs one FFT, one inverse FFT and P spectral multiplications.
+//! The output always has as many samples as the input, and the delay is exactly B samples
+//! (block buffering).
 
 use super::fft::Fft;
 
 pub struct Convolver {
     b: usize,
     fft: Fft,
-    // Impulssivasteen osien spektrit.
+    // Spectra of the impulse response parts.
     h_re: Vec<Vec<f32>>,
     h_im: Vec<Vec<f32>>,
-    // Tulolohkojen spektrien viivelinja (rengaspuskuri).
+    // Delay line of input block spectra (ring buffer).
     x_re: Vec<Vec<f32>>,
     x_im: Vec<Vec<f32>>,
     head: usize,
     prev: Vec<f32>,
     pending: Vec<f32>,
-    // Valmis lähtö, alustettu B nollalla, jotta lähtöä riittää jokaiselle tulonäytteelle.
+    // Finished output, initialised with B zeros so there is output for every input sample.
     ready: std::collections::VecDeque<f32>,
-    // Työpuskurit.
+    // Work buffers.
     w_re: Vec<f32>,
     w_im: Vec<f32>,
     a_re: Vec<f32>,
     a_im: Vec<f32>,
-    /// Pelkkä vahvistus, jos impulssivaste on yhden näytteen mittainen.
+    /// Plain gain if the impulse response is one sample long.
     trivial: Option<f32>,
 }
 
@@ -73,7 +73,7 @@ impl Convolver {
         }
     }
 
-    /// Viive näytteinä, jonka lohkopuskurointi lisää.
+    /// Delay in samples added by the block buffering.
     pub fn latency(&self) -> usize {
         if self.trivial.is_some() {
             0
@@ -103,7 +103,7 @@ impl Convolver {
     fn block(&mut self) {
         let b = self.b;
         let parts = self.h_re.len();
-        // Spektri kahdesta viimeisimmästä lohkosta [edellinen | nykyinen].
+        // Spectrum of the two latest blocks [previous | current].
         self.w_re[..b].copy_from_slice(&self.prev);
         self.w_re[b..].copy_from_slice(&self.pending);
         self.w_im.iter_mut().for_each(|v| *v = 0.0);
@@ -115,8 +115,8 @@ impl Convolver {
 
         self.a_re.iter_mut().for_each(|v| *v = 0.0);
         self.a_im.iter_mut().for_each(|v| *v = 0.0);
-        // Reaalisen signaalin spektri on konjugaattisymmetrinen, joten lasketaan vain
-        // taajuudet 0..=B ja peilataan loput.
+        // The spectrum of a real signal is conjugate symmetric, so compute only
+        // frequencies 0..=B and mirror the rest.
         let half = b + 1;
         for p in 0..parts {
             let xi = (self.head + p) % parts;
@@ -136,7 +136,7 @@ impl Convolver {
             self.a_im[2 * b - k] = -self.a_im[k];
         }
         self.fft.inverse(&mut self.a_re, &mut self.a_im);
-        // Kehäkonvoluution jälkipuolisko on laskostumaton.
+        // The second half of the circular convolution is free of aliasing.
         self.ready.extend(self.a_re[b..].iter().copied());
     }
 }
@@ -155,7 +155,7 @@ mod tests {
             c.process(chunk, &mut y);
         }
         let lat = c.latency();
-        // Verrataan suoraan konvoluutioon niiltä osin kuin lähtöä on valmiina.
+        // Compare with direct convolution for as far as output is available.
         for n in (0..y.len() - lat).step_by(37) {
             let mut acc = 0.0f64;
             for (k, &h) in ir.iter().enumerate() {

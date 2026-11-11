@@ -1,561 +1,572 @@
-# soundpaste: suunnitelma
+# soundpaste: design
 
-Tila: **hyväksytty lähtökohdaksi 2026-11-11** (kestävä tila jätetään pois ensimmäisestä versiosta, ks. luku 7). Perustuu vaiheiden 1–2
-mittauksiin (ks. `EXPERIMENTS.md`). Fyysisen kerroksen parametrit ovat
-lähtöarvoja, jotka vaiheen 4 parannussykli vahvistaa tai kumoaa.
+Status: **accepted as the starting point 2026-11-11** (the robust mode is left out of the first version, see section 7). Based on the
+measurements of stages 1–2 (see `EXPERIMENTS.md`). The physical-layer parameters
+are initial values that the improvement cycle of stage 4 confirms or refutes.
 
-Sisältö:
-1. [Päätökset lyhyesti](#1-päätökset-lyhyesti)
-2. [Mitattu kanava](#2-mitattu-kanava)
-3. [Modulaation valinta](#3-modulaation-valinta)
-4. [Fyysinen kerros](#4-fyysinen-kerros)
-5. [Linkkikerros](#5-linkkikerros)
-6. [Aika-arviot](#6-aika-arviot)
-7. [Laajennettavuus](#7-laajennettavuus)
-8. [Tunnetut rajoitukset](#8-tunnetut-rajoitukset)
-9. [Mitä on mitattu ja mitä ei](#9-mitä-on-mitattu-ja-mitä-ei)
-10. [Kysymykset sinulle](#10-kysymykset-sinulle)
+Contents:
+1. [Decisions in brief](#1-decisions-in-brief)
+2. [The measured channel](#2-the-measured-channel)
+3. [Choice of modulation](#3-choice-of-modulation)
+4. [Physical layer](#4-physical-layer)
+5. [Link layer](#5-link-layer)
+6. [Time estimates](#6-time-estimates)
+7. [Extensibility](#7-extensibility)
+8. [Known limitations](#8-known-limitations)
+9. [What has been measured and what has not](#9-what-has-been-measured-and-what-has-not)
+10. [Questions and decisions](#10-questions-and-decisions)
 
-## 1. Päätökset lyhyesti
+## 1. Decisions in brief
 
-| asia | ehdotus | tärkein peruste |
+| matter | proposal | main justification |
 |---|---|---|
-| modulaatio | 16 rinnakkaista 4-FSK-alikanavaa, energiailmaisu | kestää kaiun ilman vaiheen seurantaa, 8-kertainen nopeus yhteen säveleen verrattuna |
-| kaiun torjunta | sävelhyppy: peräkkäiset symbolit käyttävät eri sävelryhmää (4 ryhmää) | virhesuhde kaikuisassa huoneessa 7,8 % -> 0,5 % |
-| kaista | 1000–7400 Hz, 256 säveltä 25 Hz:n välein | mitattu vaste tasainen 1–8 kHz, melu 20–27 dB hiljaisempaa kuin alle 500 Hz |
-| symboli | 50 ms (40 ms ilmaisuikkuna + 10 ms suoja-aika), 4 tavua/symboli | raaka nopeus 640 bit/s |
-| tahdistus | taajuuspyyhkäisy (chirp) alkumerkkinä, sovitettu suodin | terävä ajoitus kaiussa, riippumaton tasosta ja näytteenottotaajuudesta |
-| virheenkorjaus | Reed–Solomon GF(256), pariteettia puolet datan määrästä, pyyhkiytymät käytössä | korjaa 16 % tavuista virheinä tai 33 % pyyhkiytyminä |
-| kuittaus | datakehykset ryöppynä, yksi koontikuittaus (bittikartta) | enimmäisviestillä noin 15 s vs. 23 s kehyskohtaisella kuittauksella |
-| oma kaiku | vastaanotin käy koko ajan; oma kehys tunnistetaan sisällöstä ja siitä ankkuroidaan aikakatkaisut | ei riipu selaimen tuntemattomasta viiveestä |
-| 60 merkin linkki | simulaatiossa mitattu 2,8 s (pikalähetys, oletus) tai 4,2 s (erillinen kättely) | ks. luku 6 |
+| modulation | 16 parallel 4-FSK subchannels, energy detection | withstands echo without phase tracking, 8 times the rate of a single tone |
+| echo rejection | tone hopping: consecutive symbols use a different tone group (4 groups) | error rate in the reverberant room 7.8 % -> 0.5 % |
+| band | 1000–7400 Hz, 256 tones at 25 Hz spacing | measured response flat over 1–8 kHz, noise 20–27 dB quieter than below 500 Hz |
+| symbol | 50 ms (40 ms detection window + 10 ms guard time), 4 bytes/symbol | raw rate 640 bit/s |
+| synchronisation | frequency sweep (chirp) as the preamble, matched filter | sharp timing in echo, independent of level and sample rate |
+| error correction | Reed–Solomon GF(256), parity half the amount of data, erasures in use | corrects 16 % of bytes as errors or 33 % as erasures |
+| acknowledgement | data frames as a burst, one combined ack (bitmap) | for a maximum-length message about 15 s vs. 23 s with per-frame acks |
+| own echo | the receiver runs all the time; the own frame is recognised from its content and the timeouts are anchored to it | does not depend on the browser's unknown latency |
+| 60-character link | measured in simulation 2.8 s (inline start, default) or 4.2 s (separate handshake) | see section 6 |
 
-## 2. Mitattu kanava
+## 2. The measured channel
 
-Mittaus: MacBook Pro, omat kaiuttimet -> oma mikrofoni, työhuone,
-järjestelmän äänenvoimakkuus 44 %, kolme pyyhkäisyä (100 Hz – 20 kHz).
-Äänitteet ja johdetut impulssivasteet: `corpus/kanava/`.
+Measurement: MacBook Pro, own speakers -> own microphone, home office,
+system volume 44 %, three sweeps (100 Hz – 20 kHz).
+Recordings and derived impulse responses: `corpus/channel/` (the corpus is
+local-only, not in the repository).
 
-| suure | mitattu | seuraus suunnittelulle |
+| quantity | measured | consequence for the design |
 |---|---|---|
-| taajuusvaste | tasainen ±4 dB välillä 1–8 kHz; 10–20 kHz noin 12 dB heikompi mutta käyttökelpoinen | kaista 1–7,4 kHz; lähes kuulumaton tila 18–20 kHz on mahdollinen myöhemmin |
-| taustamelu 50 Hz:n kaistalla | -78 dBFS @ 200 Hz, -98 @ 1 kHz, -105 @ 2–8 kHz | ei käytetä alle 1 kHz:n taajuuksia; koko kaistan SNR aliarvioi oikean huoneen |
-| yhden sävelen SNR (täysi amplitudi, 50 Hz) | 62–80 dB omassa mikrofonissa | kohinaan on varaa kymmeniä desibelejä: teho voidaan jakaa usealle sävelelle |
-| viivehaje | 3–4 ms, koherenssikaista 50–70 Hz | kaista (6,4 kHz) on noin 100 kertaa koherenssikaista: eri sävelet häipyvät toisistaan riippumatta |
-| energia myöhemmin kuin 10 / 20 / 40 ms | -14 / -20 / -27 dB | lyhyt symboli ilman hyppyä kärsii edellisen symbolin kaiusta |
-| oma kaiku kohinapohjassa | 62 ms (55 dB dynamiikalla) | vastausviive 150 ms riittää tässä huoneessa |
-| toinen harmoninen särö | -40 dB, yhdessä mittauksessa -24 dB | tiheät konstellaatiot (QAM) eivät toimi pienillä kaiuttimilla; FSK:lle riittää |
-| signaalin taso mikrofonissa | -33 dBFS täydellä amplitudilla | ilmaisun pitää olla tasosta riippumaton |
+| frequency response | flat ±4 dB over 1–8 kHz; 10–20 kHz about 12 dB weaker but usable | band 1–7.4 kHz; a nearly inaudible mode at 18–20 kHz is possible later |
+| background noise in a 50 Hz band | -78 dBFS @ 200 Hz, -98 @ 1 kHz, -105 @ 2–8 kHz | frequencies below 1 kHz are not used; whole-band SNR underestimates a real room |
+| SNR of a single tone (full amplitude, 50 Hz) | 62–80 dB at the own microphone | there are tens of decibels of headroom against noise: the power can be split over several tones |
+| delay spread | 3–4 ms, coherence bandwidth 50–70 Hz | the band (6.4 kHz) is about 100 times the coherence bandwidth: different tones fade independently of each other |
+| energy later than 10 / 20 / 40 ms | -14 / -20 / -27 dB | a short symbol without hopping suffers from the echo of the previous symbol |
+| own echo at the noise floor | 62 ms (with 55 dB of dynamic range) | a response delay of 150 ms is enough in this room |
+| second harmonic distortion | -40 dB, in one measurement -24 dB | dense constellations (QAM) do not work with small speakers; enough for FSK |
+| signal level at the microphone | -33 dBFS at full amplitude | detection must be level-independent |
 
-Karkea v0-modeemi (2-FSK, 100 baudia) oikealla äänellä: 4/5 lähetystä
-onnistui; hiljaisin (amplitudi 0,01) jäi havaitsematta. Simulaatiossa v0
-kaatuu kaikuun: kaikuisassa huoneessa mikään ei mene läpi.
+The crude v0 modem (2-FSK, 100 baud) over real audio: 4/5 transmissions
+succeeded; the quietest (amplitude 0.01) went undetected. In simulation v0
+breaks down in echo: in the reverberant room nothing gets through.
 
-**Rajoitus:** mittaus kuvaa polkua omasta kaiuttimesta omaan mikrofoniin
-(suora ääni 11–12 dB kaikua voimakkaampi). Toinen kone metrin päässä kuulee
-suoran äänen arviolta 14 dB heikompana ja kaiun suunnilleen samana.
-Tätä arvioidaan johdetulla profiililla `:kaukana` ja synteettisillä
-huoneilla, kunnes PC-testiasema (vaihe 7) tuo oikean kahden koneen mittauksen.
+**Limitation:** the measurement describes the path from the own speaker to the
+own microphone (direct sound 11–12 dB stronger than the echo). Another machine
+a metre away hears the direct sound an estimated 14 dB weaker and the echo
+about the same. This is estimated with the derived profile `:far` and with
+synthetic rooms until the PC test station (stage 7) brings a real two-machine
+measurement.
 
-## 3. Modulaation valinta
+## 3. Choice of modulation
 
-Vertailukoe (`soundpaste explore`, tulos: `bench/kokeet/20261111-modulaatiovertailu.txt`):
-jokaisella vaihtoehdolla lähetettiin satunnaisia symboleita kanavaprofiilien
-läpi ja mitattiin raaka bittivirhesuhde ihanteellisella tahdistuksella, ilman
-virheenkorjausta. Sama kokonaisteho kaikilla. Luvut ovat bittivirheprosentteja.
+Comparison experiment (`soundpaste explore`, result: `bench/experiments/20261111-modulation-comparison.txt`):
+with each alternative, random symbols were sent through the channel profiles
+and the raw bit error rate was measured with ideal synchronisation, without
+error correction. The same total power for all. The figures are bit error
+percentages.
 
-| vaihtoehto | bit/s | kaista | puhdas 0 dB | huone 0 dB | kaikuisa 20 dB | kaikuisa 5 dB | mitattu:kaukana 20 dB |
+| alternative | bit/s | band | clean 0 dB | room 0 dB | reverberant 20 dB | reverberant 5 dB | measured:far 20 dB |
 |---|---|---|---|---|---|---|---|
-| 2-FSK, 10 ms (kuten v0) | 100 | 0,2 kHz | 0,00 | 0,00 | 14,3 | 5,3 | 0,00 |
-| 16-FSK, yksi sävel, 40+10 ms | 80 | 0,4 kHz | 0,00 | 0,00 | 5,1 | 5,0 | 1,35 |
-| sama + hyppy (4 ryhmää) | 80 | 1,6 kHz | 0,00 | 0,00 | 0,42 | 0,10 | 0,00 |
-| 16 × 4-FSK, ei hyppyä | 640 | 1,6 kHz | 0,00 | 0,22 | 7,8 | 8,4 | 0,50 |
-| 16 × 4-FSK, hyppy 2 ryhmää | 640 | 3,2 kHz | 0,00 | 0,03 | 2,7 | 2,7 | 0,09 |
-| **16 × 4-FSK, hyppy 4 ryhmää** | **640** | **6,4 kHz** | **0,00** | **0,04** | **0,47** | **1,09** | **0,04** |
-| 8 × 4-FSK, 20+5 ms, hyppy 4 ryhmää | 640 | 6,4 kHz | 0,00 | 0,01 | 0,45 | 0,53 | 0,15 |
-| 8 × 16-FSK, hyppy 2 ryhmää | 640 | 6,4 kHz | 0,00 | 0,00 | 1,40 | 2,04 | 0,06 |
-| DQPSK, 256 säveltä (OFDM), 40+10 ms | 10 240 | 6,4 kHz | 9,2 | 13,6 | 20,1 | 23,4 | 4,1 |
-| DQPSK, 512 säveltä, 80+20 ms | 10 240 | 6,4 kHz | 8,5 | 12,1 | 14,7 | 18,5 | 1,3 |
+| 2-FSK, 10 ms (like v0) | 100 | 0.2 kHz | 0.00 | 0.00 | 14.3 | 5.3 | 0.00 |
+| 16-FSK, single tone, 40+10 ms | 80 | 0.4 kHz | 0.00 | 0.00 | 5.1 | 5.0 | 1.35 |
+| the same + hopping (4 groups) | 80 | 1.6 kHz | 0.00 | 0.00 | 0.42 | 0.10 | 0.00 |
+| 16 × 4-FSK, no hopping | 640 | 1.6 kHz | 0.00 | 0.22 | 7.8 | 8.4 | 0.50 |
+| 16 × 4-FSK, hopping over 2 groups | 640 | 3.2 kHz | 0.00 | 0.03 | 2.7 | 2.7 | 0.09 |
+| **16 × 4-FSK, hopping over 4 groups** | **640** | **6.4 kHz** | **0.00** | **0.04** | **0.47** | **1.09** | **0.04** |
+| 8 × 4-FSK, 20+5 ms, hopping over 4 groups | 640 | 6.4 kHz | 0.00 | 0.01 | 0.45 | 0.53 | 0.15 |
+| 8 × 16-FSK, hopping over 2 groups | 640 | 6.4 kHz | 0.00 | 0.00 | 1.40 | 2.04 | 0.06 |
+| DQPSK, 256 tones (OFDM), 40+10 ms | 10,240 | 6.4 kHz | 9.2 | 13.6 | 20.1 | 23.4 | 4.1 |
+| DQPSK, 512 tones, 80+20 ms | 10,240 | 6.4 kHz | 8.5 | 12.1 | 14.7 | 18.5 | 1.3 |
 
-Profiilit: "huone" RT60 0,35 s ja suora/kaiku 8 dB, "kaikuisa" RT60 0,8 s ja
-suora/kaiku 0 dB, "mitattu:kaukana" tämän huoneen mitattu vaste, jossa suoraa
-ääntä on vaimennettu 14 dB. SNR on koko kaistan (0–24 kHz) valkoista kohinaa vastaan.
+Profiles: "room" RT60 0.35 s and direct/echo 8 dB, "reverberant" RT60 0.8 s and
+direct/echo 0 dB, "measured:far" the measured response of this room with the
+direct sound attenuated by 14 dB. SNR is against white noise over the whole band (0–24 kHz).
 
-### Mitä koe kertoo
+### What the experiment tells
 
-**Kaiku on vihollinen, ei kohina.** Kaikki FSK-vaihtoehdot ovat virheettömiä
-puhtaalla kanavalla vielä 0 dB:n SNR:llä, mutta kaikuisassa huoneessa
-virheitä tulee 5–14 %, eikä signaalin voimistaminen auta (20 dB ja 5 dB
-antavat saman tuloksen). Edellisen symbolin kaiku soi yhä, kun seuraava
-symboli ilmaistaan.
+**Echo is the enemy, not noise.** All FSK alternatives are error-free on the
+clean channel even at 0 dB SNR, but in the reverberant room there are 5–14 %
+errors, and making the signal stronger does not help (20 dB and 5 dB give the
+same result). The echo of the previous symbol is still ringing when the next
+symbol is detected.
 
-**Sävelhyppy poistaa suurimman osan kaiun vaikutuksesta.** Kun peräkkäiset
-symbolit käyttävät eri sävelryhmää, edellisen symbolin kaiku ei osu nykyisen
-symbolin ehdokassäveliin. Sama taajuus tulee uudelleen käyttöön vasta neljän
-symbolin (200 ms) päästä. Neljällä ryhmällä virhesuhde putoaa 7,8 %:sta
-0,5 %:iin; kahdella ryhmällä 2,7 %:iin. Hinta on kaistanleveys, ja sitä on
-mittauksen mukaan käytettävissä.
+**Tone hopping removes most of the effect of echo.** When consecutive symbols
+use a different tone group, the echo of the previous symbol does not land on
+the candidate tones of the current symbol. The same frequency comes back into
+use only after four symbols (200 ms). With four groups the error rate drops
+from 7.8 % to 0.5 %; with two groups to 2.7 %. The price is bandwidth, and
+according to the measurement it is available.
 
-**Rinnakkaiset sävelet antavat nopeuden.** Yksi 16-FSK-sävel siirtää 80
-bittiä sekunnissa, mikä tekisi 60 merkin linkistä yli 10 sekunnin siirron.
-16 rinnakkaista 4-FSK-alikanavaa siirtää 640 bit/s samalla
-kaikukestävyydellä. Hinta on teho per sävel (-24 dB, kun huipputaso on
-rajattu), mutta mitattu sävelen SNR on 62–80 dB omassa mikrofonissa, joten
-varaa on. 4-FSK on tehokkain valinta kaistaa kohden: bittejä per sävel on
-log2(M)/M, joka on suurimmillaan, kun M on 2 tai 4.
+**Parallel tones give the rate.** One 16-FSK tone carries 80 bits per second,
+which would make a 60-character link a transfer of more than 10 seconds.
+16 parallel 4-FSK subchannels carry 640 bit/s with the same echo robustness.
+The price is power per tone (-24 dB when the peak level is limited), but the
+measured tone SNR is 62–80 dB at the own microphone, so there is headroom.
+4-FSK is the most efficient choice per unit of band: bits per tone is
+log2(M)/M, which is at its largest when M is 2 or 4.
 
-**Vaihemodulaatio (PSK/OFDM) ei sovi luotettavuutta painottavaan ensimmäiseen
-versioon.** DQPSK siirtäisi 16 kertaa enemmän bittejä, mutta virhesuhde on
-15–23 % kaikuisassa huoneessa ja 9–14 % jo pelkässä kohinassa. Ihanteellisella
-virheenkorjauksella siitä saisi silti 2–3 kbit/s, mutta se vaatisi pehmeään
-päätökseen perustuvan matalan koodisuhteen koodin (konvoluutio- tai
-LDPC-koodi), kanavan estimoinnin tai pidemmät symbolit, ja se on herkkä
-kaiuttimen särölle (mitattu -24…-40 dB) ja laitteiden kellojen erolle.
-Yksikantoaaltoinen laajakaistainen PSK tarvitsisi lisäksi ekvalisaattorin,
-koska kaista on 100 kertaa koherenssikaista. OFDM on luonteva pohja
-myöhemmälle nopealle tilalle, ei ensimmäiselle versiolle.
+**Phase modulation (PSK/OFDM) does not suit a first version that emphasises
+reliability.** DQPSK would carry 16 times more bits, but the error rate is
+15–23 % in the reverberant room and 9–14 % already in plain noise. With ideal
+error correction one would still get 2–3 kbit/s out of it, but it would
+require a low-rate code based on soft decisions (a convolutional or LDPC
+code), channel estimation or longer symbols, and it is sensitive to speaker
+distortion (measured -24…-40 dB) and to the difference between the devices'
+clocks. Single-carrier wideband PSK would in addition need an equaliser,
+because the band is 100 times the coherence bandwidth. OFDM is a natural basis
+for a later fast mode, not for the first version.
 
-**Chirp (taajuuspyyhkäisy) datan siirtoon** levittäisi jokaisen symbolin koko
-kaistalle ja kestäisi kapeakaistaista häiriötä, mutta sen tuoma
-käsittelyvahvistus kohinaa vastaan on turha, kun kohina ei ole rajoittava
-tekijä. Tahdistukseen se sen sijaan on paras vaihtoehto (ks. 4.3).
+**Chirp (frequency sweep) for carrying data** would spread every symbol over
+the whole band and withstand narrowband interference, but the processing gain
+it brings against noise is useless when noise is not the limiting factor. For
+synchronisation, on the other hand, it is the best alternative (see 4.3).
 
-### Valinta
+### The choice
 
-**16 × 4-FSK, sävelhyppy neljällä ryhmällä, 40 + 10 ms.** Lähes yhtä hyvä
-ehdokas on 8 × 4-FSK 20 + 5 ms:n symboleilla (sama nopeus ja kaista,
-puolet sävelistä yhtä aikaa, mutta tiukempi ajoitusvaatimus). Vaihe 4 vertaa
-näitä kahta koko kehyksellä, tahdistus ja virheenkorjaus mukana.
+**16 × 4-FSK, tone hopping over four groups, 40 + 10 ms.** An almost equally
+good candidate is 8 × 4-FSK with 20 + 5 ms symbols (the same rate and band,
+half the tones at once, but a tighter timing requirement). Stage 4 compares
+these two with the whole frame, synchronisation and error correction included.
 
-Huippu- ja tehollisarvon suhde (PAPR) on 16 sävelellä noin 13 dB ja 8
-sävelellä noin 12 dB. Kaiutin rajaa huipputason, joten rinnakkaiset sävelet
-maksavat tehoa. Leikkauskoe: ks. [luku 9](#9-mitä-on-mitattu-ja-mitä-ei).
+The peak-to-RMS ratio (PAPR) is about 13 dB with 16 tones and about 12 dB with
+8 tones. The speaker limits the peak level, so parallel tones cost power.
+Clipping experiment: see [section 9](#9-what-has-been-measured-and-what-has-not).
 
-## 4. Fyysinen kerros
+## 4. Physical layer
 
-### 4.1 Sävelristikko ja symboli
+### 4.1 Tone grid and symbol
 
-- Sävelet: f_i = 1000 Hz + i · 25 Hz, i = 0…255 (1000–7375 Hz).
-- Sävelväli 25 Hz = 1 / 40 ms: sävelet ovat keskenään ortogonaalisia 40 ms:n
-  ilmaisuikkunassa.
-- 16 alikanavaa, kussakin 16 säveltä: 4 arvoa × 4 hyppyryhmää.
-  Alikanavan s, arvon v (0–3) ja symbolin t sävel on
-  `i = 16·s + 4·v + (t mod 4)` ("lomitettu": ehdokkaat ovat 100 Hz:n välein,
-  ja edellisten symbolien sävelet jäävät niiden väliin).
-- Symboli kestää 50 ms: 10 ms suoja-aikaa ja 40 ms ilmaisuikkuna. Suoja-aika
-  nielee ajoitusvirheen ja varhaiset heijastukset (mitattu: energia yli 10 ms
-  myöhässä on -14 dB). Sävelet nousevat ja laskevat pehmeästi suoja-ajan sisällä.
-- Jokainen symboli kantaa 16 × 2 = 32 bittiä eli 4 tavua.
-- Jokaisella sävelellä on kiinteä näennäissatunnainen alkuvaihe, jotta 16
-  säveltä eivät summaudu yhdeksi piikiksi.
+- Tones: f_i = 1000 Hz + i · 25 Hz, i = 0…255 (1000–7375 Hz).
+- Tone spacing 25 Hz = 1 / 40 ms: the tones are mutually orthogonal in the
+  40 ms detection window.
+- 16 subchannels, each with 16 tones: 4 values × 4 hop groups.
+  The tone of subchannel s, value v (0–3) and symbol t is
+  `i = 16·s + 4·v + (t mod 4)` ("interleaved": the candidates are 100 Hz
+  apart, and the tones of the previous symbols fall between them).
+- A symbol lasts 50 ms: 10 ms of guard time and a 40 ms detection window. The
+  guard time absorbs the timing error and the early reflections (measured:
+  energy more than 10 ms late is -14 dB). The tones rise and fall smoothly
+  within the guard time.
+- Every symbol carries 16 × 2 = 32 bits, i.e. 4 bytes.
+- Every tone has a fixed pseudorandom initial phase, so that the 16 tones do
+  not add up into a single spike.
 
-Vastaanotin laskee jokaisesta symbolista ehdokassävelten energiat
-(Goertzel-tyyppinen korrelaatio täsmälleen 40 ms:n ikkunassa) ja valitsee
-kussakin alikanavassa voimakkaimman. Ikkunan pituus määritellään sekunteina,
-joten sama toimii millä tahansa näytteenottotaajuudella (48 kHz: 1920
-näytettä, 44,1 kHz: 1764 näytettä). FFT:tä ei käytetä ilmaisuun, koska sen
-pituus pitäisi sovittaa kahden potenssiin.
+For every symbol the receiver computes the energies of the candidate tones
+(a Goertzel-type correlation over a window of exactly 40 ms) and picks the
+strongest in each subchannel. The window length is defined in seconds, so the
+same works at any sample rate (48 kHz: 1920 samples, 44.1 kHz: 1764 samples).
+FFT is not used for detection, because its length would have to be fitted to a
+power of two.
 
-Jos alikanavan kahden voimakkaimman ehdokkaan ero on pieni, tavu merkitään
-pyyhkiytymäksi. Reed–Solomon korjaa pyyhkiytymiä kaksi kertaa niin monta kuin
-virheitä.
+If the difference between the two strongest candidates of a subchannel is
+small, the byte is marked as an erasure. Reed–Solomon corrects twice as many
+erasures as errors.
 
-### 4.2 Tavujen sijoittelu symboleihin
+### 4.2 Placement of bytes into symbols
 
-Jokainen alikanava kuljettaa omaa tavuvirtaansa: tavu vie neljä peräkkäistä
-symbolia yhdessä alikanavassa. Peruste: taajuusvalikoiva häipyminen on kehyksen
-ajan pysyvää (laitteet eivät liiku), joten kuollut alikanava pilaa 1/16
-tavuista eikä palaa jokaisesta tavusta. Lyhyt laajakaistainen häiriö
-(kolahdus) osuu sen sijaan kaikkiin alikanaviin kerralla. Vaihe 4 mittaa
-tämän ja vaihtoehtoisen sijoittelun (tavu = neljä alikanavaa yhdessä symbolissa)
-kolahdus- ja kaikuprofiileilla.
+Every subchannel carries its own byte stream: a byte takes four consecutive
+symbols in one subchannel. Justification: frequency-selective fading is
+constant for the duration of a frame (the devices do not move), so a dead
+subchannel ruins 1/16 of the bytes and not a piece of every byte. A short
+wideband interference (a thump), on the other hand, hits all subchannels at
+once. Stage 4 measures this and the alternative placement (byte = four
+subchannels in one symbol) with the thump and echo profiles.
 
-### 4.3 Alkumerkki ja tahdistus
+### 4.3 Preamble and synchronisation
 
-Alkumerkki on taajuuspyyhkäisy 1000 -> 7400 Hz (noin 60 ms). Vastaanotin
-korreloi tulosignaalia pyyhkäisyn mallia vastaan (sovitettu suodin,
-laskettuna lohkoittain FFT:llä).
+The preamble is a frequency sweep 1000 -> 7400 Hz (about 60 ms). The receiver
+correlates the input signal against the chirp template (a matched filter,
+computed block by block with FFT).
 
-- Pyyhkäisyn kaistanleveys (6,4 kHz) antaa ajoitustarkkuudeksi noin 0,2 ms,
-  kun symbolin suoja-aika on 10 ms.
-- Kaiku näkyy korrelaatiossa erillisinä myöhempinä huippuina, eikä levitä
-  päähuippua. Ajoitus otetaan ensimmäisestä vahvasta huipusta (suora ääni).
-- Kapeakaistainen häiriö tai häipymä pilaa vain osan pyyhkäisystä.
-- Havaintokynnys on suhteellinen: huippua verrataan korrelaation omaan
-  taustatasoon juuri ennen huippua (CFAR). Näin kynnys ei riipu signaalin
-  tasosta eikä kaistan ulkopuolisesta melusta.
-- Malli lasketaan vastaanottimen omalla näytteenottotaajuudella, joten
-  44,1/48 kHz:n ero ei vaikuta. 100 ppm:n kellovirhe siirtää ajoitusta
-  3 sekunnin kehyksessä 0,3 ms, mikä mahtuu suoja-aikaan.
+- The bandwidth of the chirp (6.4 kHz) gives a timing accuracy of about
+  0.2 ms, while the symbol guard time is 10 ms.
+- Echo shows up in the correlation as separate later peaks and does not spread
+  the main peak. The timing is taken from the first strong peak (the direct
+  sound).
+- Narrowband interference or a fade ruins only a part of the chirp.
+- The detection threshold is relative: the peak is compared with the
+  correlation's own background level just before the peak (CFAR). This way the
+  threshold depends neither on the signal level nor on out-of-band noise.
+- The template is computed at the receiver's own sample rate, so the
+  44.1/48 kHz difference has no effect. A clock error of 100 ppm shifts the
+  timing by 0.3 ms over a 3-second frame, which fits within the guard time.
 
-v0:n opetus: kehyksen perään tulee 20 ms:n häntä, jotta viimeinen symboli ei
-ole viimeinen asia, jonka kaiutin soittaa.
+The lesson of v0: a 20 ms tail follows the frame, so that the last symbol is
+not the last thing the speaker plays.
 
-### 4.4 Kehys
+### 4.4 Frame
 
 ```text
-| alkumerkki 60 ms | tauko 10 ms | otsake 3 symbolia | hyötykuorma N symbolia | häntä 20 ms |
+| preamble 60 ms | pause 10 ms | header 3 symbols | payload N symbols | tail 20 ms |
 ```
 
-**Otsake** (aina perustilassa, 12 tavua = 3 symbolia):
+**Header** (always in the base mode, 12 bytes = 3 symbols):
 
-| tavu | sisältö |
+| byte | content |
 |---|---|
-| 0 | bitit 7–5: protokollaversio (nyt 1), bitit 4–0: tilatunniste (0 = perustila) |
-| 1 | hyötykuorman pituus L tavuina (0–160) |
-| 2 | CRC-8 tavuista 0–1 |
-| 3–11 | Reed–Solomon-pariteetti (9 tavua: korjaa 4 virheellistä tavua 12:sta) |
+| 0 | bits 7–5: protocol version (now 1), bits 4–0: mode identifier (0 = base mode) |
+| 1 | payload length L in bytes (0–160) |
+| 2 | CRC-8 of bytes 0–1 |
+| 3–11 | Reed–Solomon parity (9 bytes: corrects 4 erroneous bytes out of 12) |
 
-Otsake on koodattu raskaammin kuin data, koska sen menetys hukkaa koko
-kehyksen. Tilatunniste kertoo, millä modulaatiolla hyötykuorma on lähetetty.
-Tuntematonta versiota tai tilaa ei yritetä purkaa. Nopeammat tilat voivat
-näin käyttää samaa alkumerkkiä ja otsaketta.
+The header is coded more heavily than the data, because losing it wastes the
+whole frame. The mode identifier tells which modulation the payload was sent
+with. No attempt is made to decode an unknown version or mode. Faster modes
+can thus use the same preamble and header.
 
-**Hyötykuorma** (tilan mukaisella modulaatiolla):
+**Payload** (with the modulation of the mode):
 
-| tavut | sisältö |
+| bytes | content |
 |---|---|
-| 0 … L-1 | linkkikerroksen kehys (ks. 5.1) |
-| L, L+1 | CRC-16 tavuista 0…L-1 |
-| loput | Reed–Solomon-pariteetti P tavua |
+| 0 … L-1 | link-layer frame (see 5.1) |
+| L, L+1 | CRC-16 of bytes 0…L-1 |
+| the rest | Reed–Solomon parity, P bytes |
 
-P = ceil((L + 2) / 2), vähintään 4, pyöristettynä ylös niin, että L + 2 + P on
-neljällä jaollinen (symboli täyttyy; ylimääräinen pariteetti on ilmaista).
-Koodisana on enintään 255 tavua, joten L on enintään 160. CRC-16 on mukana,
-koska kapasiteetin ylittyessä Reed–Solomon voi harvoin "korjata" väärään
-koodisanaan.
+P = ceil((L + 2) / 2), at least 4, rounded up so that L + 2 + P is divisible
+by four (the symbol is filled; the extra parity is free).
+The codeword is at most 255 bytes, so L is at most 160. CRC-16 is included
+because when the capacity is exceeded, Reed–Solomon can on rare occasions
+"correct" to a wrong codeword.
 
-Kehyksen kesto: 90 ms (alkumerkki, tauko, häntä) + 150 ms (otsake) +
+Frame duration: 90 ms (preamble, pause, tail) + 150 ms (header) +
 50 ms × (L + 2 + P) / 4.
 
-## 5. Linkkikerros
+## 5. Link layer
 
-Linkkikerros on tilakone, joka ei tiedä äänestä mitään. Sille annetaan
-tapahtumia (kehys vastaanotettu, alkumerkki havaittu, oma lähetys loppui,
-kello) ja se palauttaa toimia (lähetä kehys, näytä tila). Aika annetaan
-ulkoa, joten testit ovat deterministisiä. Sama tilakone pyörii selaimessa,
-CLI:ssä ja simulaattorissa.
+The link layer is a state machine that knows nothing about sound. It is given
+events (frame received, preamble detected, own transmission ended, clock) and
+it returns actions (send a frame, show a status). Time is supplied from
+outside, so the tests are deterministic. The same state machine runs in the
+browser, in the CLI and in the simulator.
 
-### 5.1 Kehystyypit tavu tavulta
+### 5.1 Frame types byte by byte
 
-Kaikissa kehyksissä: tavu 0 = tyyppi (ylempi puolitavu) ja liput (alempi),
-tavut 1–2 = viestin tunniste (satunnainen 16-bittinen, lähettäjä valitsee).
+In all frames: byte 0 = type (upper nibble) and flags (lower), bytes 1–2 =
+message identifier (random 16-bit, chosen by the sender).
 
-| tyyppi | nimi | suunta | sisältö tavusta 3 alkaen | L |
+| type | name | direction | content from byte 3 onwards | L |
 |---|---|---|---|---|
-| 1 | START | A -> B | viestin pituus (2), kehysten määrä (1), kehyksen datakoko (1), viestin CRC-32 (4). Lippu 1: koko viesti seuraa kehyksen lopussa (pikalähetys) | 11–75 |
-| 2 | START_ACK | B -> A | signaalin laatu: SNR dB (1), taso dBFS (1), liput (1: bitti 0 = leikkautuu) | 6 |
-| 3 | DATA | A -> B | järjestysnumero (1), dataa enintään 64 tavua. Lippu 0: ryöpyn viimeinen | 4–68 |
-| 4 | ACK | B -> A | laatu (3), bittikartta saaduista kehyksistä (1). Lippu 0: aloita alusta | 7 |
-| 5 | DONE | B -> A | viestin CRC-32 (4) | 7 |
-| 6 | POLL | A -> B | ei sisältöä: "lähetä kuittauksesi uudelleen" | 3 |
-| 7 | CANCEL | A -> B | ei sisältöä | 3 |
+| 1 | START | A -> B | message length (2), number of frames (1), frame data size (1), message CRC-32 (4). Flag 1: the whole message follows at the end of the frame (inline start) | 11–75 |
+| 2 | START_ACK | B -> A | signal quality: SNR dB (1), level dBFS (1), flags (1: bit 0 = clipping) | 6 |
+| 3 | DATA | A -> B | sequence number (1), at most 64 bytes of data. Flag 0: last of the burst | 4–68 |
+| 4 | ACK | B -> A | quality (3), bitmap of received frames (1). Flag 0: start over | 7 |
+| 5 | DONE | B -> A | message CRC-32 (4) | 7 |
+| 6 | POLL | A -> B | no content: "send your ack again" | 3 |
+| 7 | CANCEL | A -> B | no content | 3 |
 
-Lippu 3 (0x08) on varattu merkitsemään salattua sisältöä.
+Flag 3 (0x08) is reserved for marking encrypted content.
 
-Viestin enimmäispituus on 512 tavua (8 datakehystä à 64 tavua). Tyhjä viesti
-on sallittu: kehyksiä on 0 ja B vastaa aloitukseen suoraan DONE-kehyksellä.
+The maximum message length is 512 bytes (8 data frames of 64 bytes each). An
+empty message is allowed: there are 0 frames and B answers the start directly
+with a DONE frame.
 
-### 5.2 Vuorosuuntaisuus ja oma kaiku
+### 5.2 Half-duplex operation and own echo
 
-Kone kuulee oman kaiuttimensa. Vastaanotinta ei mykistetä lähetyksen ajaksi,
-vaan se purkaa myös oman lähetyksen, ja linkkikerros käyttää sitä hyväksi:
+A computer hears its own speaker. The receiver is not muted for the duration
+of a transmission; instead it also decodes the own transmission, and the link
+layer makes use of it:
 
-- **Tunnistus:** vastaanotettu kehys, joka on tavu tavulta sama kuin viimeksi
-  itse lähetetty, on oma kaiku. Roolit takaavat, ettei vastapuoli lähetä
-  samaa: A lähettää vain START/DATA/POLL/CANCEL ja B vain START_ACK/ACK/DONE.
-- **Ankkurointi:** oman kehyksen loppu mikrofonin aikajanalla on tarkka
-  hetki, jolloin ääni oikeasti lakkasi. Vastauksen odotus alkaa siitä, joten
-  selaimen tuntematon lähtö- ja tuloviive (jopa satoja millisekunteja) ei
-  vaikuta aikakatkaisuun. Jos omaa kehystä ei kuulu (esim. kuulokkeet),
-  ankkurina on lähetyksen loppu + 0,5 s.
-- **Suoja-aika:** vastaaja odottaa 150 ms vastaanotetun kehyksen lopusta
-  ennen kuin lähettää. Mitattu oma kaiku on kohinapohjassa 62 ms:ssa;
-  kaikuisammassa huoneessa alkumerkin suhteellinen kynnys ja sävelhyppy
-  sietävät loput.
+- **Recognition:** a received frame that is byte for byte the same as the one
+  last sent by oneself is the own echo. The roles guarantee that the other
+  side does not send the same: A sends only START/DATA/POLL/CANCEL and B only
+  START_ACK/ACK/DONE.
+- **Anchoring:** the end of the own frame on the microphone's timeline is the
+  exact moment when the sound really stopped. The wait for the reply starts
+  from it, so the browser's unknown output and input latency (up to hundreds
+  of milliseconds) does not affect the timeout. If the own frame is not heard
+  (e.g. headphones), the anchor is the end of the transmission + 0.5 s.
+- **Guard time:** the responder waits 150 ms from the end of the received
+  frame before sending. The measured own echo is at the noise floor at 62 ms;
+  in a more reverberant room the relative threshold of the preamble and tone
+  hopping tolerate the rest.
 
-### 5.3 Tilakone
+### 5.3 State machine
 
 ```text
-                 send()                 START_ACK                 kaikki kuitattu
-  LEPO ────────────────► ALOITUS ────────────────► LÄHETYS ◄──┐
-   ▲  ▲                  (START)                   (DATA-ryöppy)│ ACK: puuttuvia
-   │  │                     │ 3 yritystä                │        │
-   │  │                     ▼ ilman vastausta           ▼        │
-   │  │              "ei vastaanottajaa"         ODOTUS ─────────┘
+                 send()                 START_ACK                 all acknowledged
+  IDLE ────────────────► STARTING ───────────────► SENDING ◄──┐
+   ▲  ▲                  (START)                   (DATA burst) │ ACK: some missing
+   │  │                     │ 3 attempts                │        │
+   │  │                     ▼ without a reply           ▼        │
+   │  │              "no receiver"               WAITING ────────┘
    │  │                                          (ACK/DONE)
-   │  └──────────── DONE: "Perillä" ◄───────────────┘
+   │  └──────────── DONE: "Delivered" ◄─────────────┘
    │
-   │  START                       DATA...                    kaikki koossa, CRC-32 ok
-  LEPO ────────► VASTAANOTTO ──────────────► VASTAANOTTO ──────────────► LEPO
-        START_ACK              ACK ryöpyn                      DONE, näytä viesti
-                               lopussa
+   │  START                       DATA...                    all assembled, CRC-32 ok
+  IDLE ────────► RECEIVING ────────────────► RECEIVING ────────────────► IDLE
+        START_ACK              ACK at the end                  DONE, show the message
+                               of the burst
 ```
 
-Lähettäjän (A) tilat: LEPO, KANAVAN KUUNTELU, ALOITUS, LÄHETYS, ODOTUS.
-Vastaanottajan (B) tilat: LEPO, VASTAANOTTO. Roolit ovat symmetriset: kumpi
-tahansa voi aloittaa, ja roolit määräytyvät viestikohtaisesti.
+States of the sender (A): IDLE, CHANNEL LISTEN, STARTING, SENDING, WAITING.
+States of the receiver (B): IDLE, RECEIVING. The roles are symmetric: either
+one can start, and the roles are determined per message.
 
-### 5.4 Aikakatkaisut
+### 5.4 Timeouts
 
-Kaikki ajat on ankkuroitu havaitun signaalin päättymiseen (oman tai
-vastapuolen), ei omaan kelloon lähetyshetkellä.
+All times are anchored to the end of a detected signal (the own or the other
+side's), not to the own clock at the moment of sending.
 
-| nimi | arvo | ankkuri | tarkoitus |
+| name | value | anchor | purpose |
 |---|---|---|---|
-| vastausviive | 150 ms | vastaanotetun kehyksen loppu | oman ja huoneen kaiun suoja-aika |
-| vastauksen odotus | 1,5 s | oman kehyksen loppu mikrofonissa | kattaa vastausviiveen ja molempien laitteiden ääniviiveet |
-| odotuksen jatko | kehyksen loppuun | alkumerkki havaittu odotuksen aikana | vastaus on tulossa, vaikka se alkoi myöhään |
-| aloitusyritykset | 3 | | sitten "vastaanottajaa ei löytynyt" (simulaatiossa noin 8–11 s) |
-| POLL-yritykset | 3 | | kuittaus tai loppukuittaus katosi |
-| uudelleenlähetyskierrokset | 6 | | sitten "siirto epäonnistui" syineen |
-| vastaanoton aikakatkaisu | 6 s | viimeisin havaittu signaalin loppu | lähettäjä katosi: osittainen viesti hylätään |
-| kanavan kuuntelu | 200 ms hiljaista | | ennen START-kehystä |
-| satunnainen odotus | 0,2–2,2 s | | kanava varattu tai aloitus törmäsi |
-| valmiiden viestien muisti | 8 tunnistetta, 60 s | | kaksoiskappaleiden tunnistus |
+| response delay | 150 ms | end of the received frame | guard time for the own and the room's echo |
+| reply timeout | 1.5 s | end of the own frame at the microphone | covers the response delay and the audio latencies of both devices |
+| extension of the wait | to the end of the frame | preamble detected during the wait | the reply is coming even though it started late |
+| start attempts | 3 | | then "no receiver found" (in simulation about 8–11 s) |
+| POLL attempts | 3 | | an ack or the final ack was lost |
+| retransmission rounds | 6 | | then "transfer failed" with reasons |
+| receive timeout | 6 s | the latest detected end of signal | the sender disappeared: the partial message is discarded |
+| channel listen | 200 ms of silence | | before the START frame |
+| random backoff | 0.2–2.2 s | | channel busy or the start collided |
+| memory of completed messages | 8 identifiers, 60 s | | duplicate recognition |
 
-B lähettää kuittauksen, kun (a) se saa DATA-kehyksen, jossa on "ryöpyn
-viimeinen" -lippu, tai (b) se on havainnut alkumerkkejä edellisen
-kuittauksensa jälkeen ja kanava on ollut hiljaa 400 ms. Kohta (b) kattaa
-tapauksen, jossa ryöpyn viimeinen kehys vioittui.
+B sends an ack when (a) it receives a DATA frame with the "last of the burst"
+flag, or (b) it has detected preambles since its previous ack and the channel
+has been silent for 400 ms. Case (b) covers the situation where the last frame
+of the burst was corrupted.
 
-### 5.5 Normaali sessio
+### 5.5 Normal session
 
-1. Molemmat koneet kuuntelevat (LEPO). Alkumerkin ilmaisin käy koko ajan.
-2. A:n käyttäjä painaa Lähetä. Teksti on UTF-8-tavuja. A arpoo
-   16-bittisen tunnisteen, laskee CRC-32:n ja jakaa viestin 64 tavun paloihin.
-3. A kuuntelee kanavaa 200 ms. Jos alkumerkki on havaittu tai kehyksen
-   vastaanotto on kesken, A odottaa satunnaisesti 0,3–1,2 s ja kuuntelee uudelleen.
-4. A lähettää START-kehyksen ja kuulee sen itse (ankkuri).
-5. B saa START-kehyksen, varaa muistin, näyttää "vastaanotetaan" ja
-   lähettää 150 ms:n kuluttua START_ACK-kehyksen, jossa on sen mittaama
-   signaalin laatu.
-6. A saa START_ACK-kehyksen ja lähettää kaikki datakehykset peräkkäin
-   (kehysten välissä 50 ms). Viimeisessä on "ryöpyn viimeinen" -lippu.
-7. B tallentaa ehjät kehykset ja näyttää edistymisen. Ryöpyn lopussa:
-   - kaikki koossa ja CRC-32 täsmää: B lähettää DONE-kehyksen, näyttää
-     tekstin ja Kopioi-napin ja palaa lepoon
-   - puuttuu: B lähettää ACK-kehyksen, jonka bittikartta kertoo saadut
-8. A saa ACK-kehyksen ja lähettää vain puuttuvat (uusi kierros), tai saa
-   DONE-kehyksen, vertaa CRC-32:n ja näyttää "Perillä".
+1. Both computers listen (IDLE). The preamble detector runs all the time.
+2. A's user presses Send. The text is UTF-8 bytes. A draws a random
+   16-bit identifier, computes the CRC-32 and splits the message into 64-byte chunks.
+3. A listens to the channel for 200 ms. If a preamble has been detected or the
+   reception of a frame is in progress, A waits a random 0.3–1.2 s and listens again.
+4. A sends the START frame and hears it itself (the anchor).
+5. B receives the START frame, allocates memory, shows "receiving" and
+   after 150 ms sends a START_ACK frame containing the signal quality it
+   measured.
+6. A receives the START_ACK frame and sends all data frames one after another
+   (50 ms between frames). The last one has the "last of the burst" flag.
+7. B stores the intact frames and shows the progress. At the end of the burst:
+   - all assembled and the CRC-32 matches: B sends a DONE frame, shows the
+     text and the Copy button and returns to idle
+   - some missing: B sends an ACK frame whose bitmap tells which were received
+8. A receives the ACK frame and sends only the missing ones (a new round), or
+   receives the DONE frame, compares the CRC-32 and shows "Delivered".
 
-### 5.6 Poikkeustilanteet
+### 5.6 Exceptional situations
 
-| tilanne | mitä tapahtuu |
+| situation | what happens |
 |---|---|
-| datakehys katoaa tai vioittuu | Kehyksen CRC-16 (ja Reed–Solomon) hylkää sen. B:n bittikartasta puuttuu kehys, ja A lähettää sen uudelleen seuraavalla kierroksella. Enintään 6 kierrosta. |
-| ryöpyn viimeinen kehys katoaa | B ei näe lippua, mutta on havainnut alkumerkkejä ja kuittaa, kun kanava on ollut hiljaa 400 ms. |
-| kuittaus (ACK) katoaa tai vioittuu | A:n vastauksen odotus (1,5 s) päättyy. A lähettää POLL-kehyksen ja B toistaa kuittauksensa. Kolmen vastaamattoman POLL-kehyksen jälkeen siirto epäonnistuu. |
-| aloituksen kuittaus (START_ACK) katoaa | A lähettää START-kehyksen uudelleen. B tunnistaa tunnisteen ja vastaa uudelleen aloittamatta alusta. |
-| loppukuittaus (DONE) katoaa | A lähettää POLL-kehyksen (tai START/DATA-kehyksen uudelleen). B löytää tunnisteen valmiiden viestien muistista, lähettää DONE-kehyksen uudelleen eikä näytä viestiä toista kertaa. |
-| molemmat painavat Lähetä yhtä aikaa | Jos lähetykset menevät päällekkäin, kumpikaan ei saa START_ACK-kehystä. Molemmat odottavat satunnaisen ajan (0,3–1,2 s) ja kuuntelevat kanavaa, jolloin toinen ehtii ensin. Se, joka saa vieraan START-kehyksen omaa aloitustaan odottaessaan, siirtyy vastaanottajaksi ja lähettää oman viestinsä heti vastaanoton päätyttyä. Jos molemmat kuulevat toistensa START-kehyksen, pienempi tunniste pitää lähettäjän roolin. |
-| lähettäjä katoaa kesken viestin | B ei havaitse session kehyksiä 6 sekuntiin viimeisestä signaalin lopusta. B hylkää osittaisen viestin, kertoo siitä käyttäjälle ja palaa lepoon. |
-| käyttäjä peruuttaa lähetyksen | A lopettaa äänen heti, lähettää yhden CANCEL-kehyksen ja palaa lepoon. B hylkää osittaisen viestin. Jos CANCEL katoaa, B:n 6 s:n aikakatkaisu hoitaa asian. |
-| vastaanottajaa ei ole | Kolme START-yritystä ilman vastausta, sitten "vastaanottajaa ei löytynyt" noin 6 sekunnissa. Dataa ei lähetetä. |
-| voimakas häiriöääni kesken siirron | Osa kehyksistä vioittuu: Reed–Solomon korjaa lyhyen häiriön (kolahdus osuu 1–2 symboliin), pidempi (puhe) kaataa kehyksiä, jotka lähetetään uudelleen. Kuittaus voi myös kadota (POLL). Jos kierrokset loppuvat, A näyttää syyn B:n raportoiman laadun perusteella. |
-| ääkköset, emoji | Sisältö on UTF-8-tavuja, joita protokolla ei tulkitse. Katkaisu paloihin saa osua merkin keskelle, koska viesti kootaan ennen tulkintaa. Pituusraja lasketaan tavuista, ja käyttöliittymä näyttää sen. |
-| tyhjä viesti | START (pituus 0, 0 kehystä) -> DONE. |
-| enimmäispituinen viesti | 512 tavua = 8 datakehystä yhdessä ryöpyssä. |
-| vioittunut kehys läpäisee tarkistukset | Kehyksen CRC-16 ja koko viestin CRC-32 yhdessä: jos koottu viesti ei täsmää, B lähettää ACK-kehyksen "aloita alusta" -lipulla. |
-| vieras viesti kesken oman session | Kehykset, joiden tunniste ei ole käynnissä olevan session, ohitetaan. |
+| a data frame is lost or corrupted | The frame's CRC-16 (and Reed–Solomon) rejects it. The frame is missing from B's bitmap, and A resends it in the next round. At most 6 rounds. |
+| the last frame of the burst is lost | B does not see the flag, but has detected preambles and acknowledges when the channel has been silent for 400 ms. |
+| an ack (ACK) is lost or corrupted | A's reply timeout (1.5 s) expires. A sends a POLL frame and B repeats its ack. After three unanswered POLL frames the transfer fails. |
+| the start ack (START_ACK) is lost | A sends the START frame again. B recognises the identifier and answers again without starting over. |
+| the final ack (DONE) is lost | A sends a POLL frame (or the START/DATA frame again). B finds the identifier in the memory of completed messages, sends the DONE frame again and does not show the message a second time. |
+| both press Send at the same time | If the transmissions overlap, neither gets a START_ACK frame. Both wait a random time (0.3–1.2 s) and listen to the channel, so one gets there first. The one that receives a foreign START frame while waiting for its own start becomes the receiver and sends its own message right after the reception ends. If both hear each other's START frame, the smaller identifier keeps the sender role. |
+| the sender disappears in the middle of a message | B detects no frames of the session for 6 seconds from the last end of signal. B discards the partial message, tells the user and returns to idle. |
+| the user cancels the transmission | A stops the sound immediately, sends one CANCEL frame and returns to idle. B discards the partial message. If the CANCEL is lost, B's 6 s timeout takes care of it. |
+| there is no receiver | Three START attempts without a reply, then "no receiver found" in about 6 seconds. No data is sent. |
+| a loud interfering sound in the middle of a transfer | Some of the frames are corrupted: Reed–Solomon corrects a short interference (a thump hits 1–2 symbols), a longer one (speech) brings down frames, which are resent. The ack can also be lost (POLL). If the rounds run out, A shows the reason based on the quality reported by B. |
+| non-ASCII letters, emoji | The content is UTF-8 bytes that the protocol does not interpret. The split into chunks may fall in the middle of a character, because the message is assembled before interpretation. The length limit is counted in bytes, and the user interface shows it. |
+| empty message | START (length 0, 0 frames) -> DONE. |
+| maximum-length message | 512 bytes = 8 data frames in one burst. |
+| a corrupted frame passes the checks | The frame's CRC-16 and the whole message's CRC-32 together: if the assembled message does not match, B sends an ACK frame with the "start over" flag. |
+| a foreign message in the middle of the own session | Frames whose identifier is not that of the ongoing session are ignored. |
 
-Epäonnistumisen syy käyttäjälle johdetaan näin: ei yhtään vastausta ->
-"vastaanottajaa ei löytynyt"; vastapuoli raportoi leikkautumista ->
-"signaali leikkautuu, pienennä äänenvoimakkuutta"; raportoitu SNR matala ja
-taso matala -> "signaali liian hiljainen, lisää äänenvoimakkuutta tai siirrä
-koneet lähemmäs"; SNR matala ja taso normaali -> "liikaa taustamelua".
+The reason for failure shown to the user is derived as follows: no reply at
+all -> "no receiver found"; the other side reports clipping -> "signal is
+clipping, lower the volume"; reported SNR low and level low -> "signal too
+quiet, raise the volume or move the computers closer"; SNR low and level
+normal -> "too much background noise".
 
-### 5.7 Ryöppy vai kehyskohtainen kuittaus
+### 5.7 Burst or per-frame ack
 
-Jokainen suunnanvaihto maksaa vastausviiveen (150 ms), laitteiden ääniviiveet
-(arvio 200 ms, mitataan kehässä D) ja kuittauskehyksen (390 ms): yhteensä
-noin 0,75 s per kuittaus ja toinen 0,35 s paluusuuntaan.
+Every change of direction costs the response delay (150 ms), the devices'
+audio latencies (estimate 200 ms, measured in loop D) and the ack frame
+(390 ms): in total about 0.75 s per ack and another 0.35 s for the return
+direction.
 
-| viesti | kehyskohtainen kuittaus | ryöppy + koontikuittaus |
+| message | per-frame ack | burst + combined ack |
 |---|---|---|
-| 60 tavua (1 datakehys) | sama | sama |
-| 512 tavua (8 datakehystä) | noin 23 s | noin 15,5 s |
+| 60 bytes (1 data frame) | the same | the same |
+| 512 bytes (8 data frames) | about 23 s | about 15.5 s |
 
-Yhden kehyksen viestillä tavat ovat identtiset. Pitkällä viestillä ryöppy on
-kolmanneksen nopeampi, ja valikoiva uudelleenlähetys bittikartalla hoitaa
-huonon kanavan. Ryöpyn koko on linkkikerroksen parametri (1 = kehyskohtainen
-kuittaus), joten vaiheen 5 mittausajo vertaa molempia simuloiduilla
-kanavilla ennen lopullista valintaa.
+For a one-frame message the methods are identical. For a long message the
+burst is a third faster, and selective retransmission with the bitmap handles
+a bad channel. The burst size is a link-layer parameter (1 = per-frame ack),
+so the bench run of stage 5 compares both on simulated channels before the
+final choice.
 
-### 5.8 Pikalähetys (päätetty mittausten perusteella)
+### 5.8 Inline start (decided on the basis of measurements)
 
-Jos viesti mahtuu yhteen kehykseen (enintään 64 tavua), se kulkee
-ensimmäisen START-kehyksen mukana ja B vastaa suoraan DONE-kehyksellä.
-Jos aloitukseen ei vastata, uudet yritykset ovat lyhyitä START-kehyksiä ilman
-viestiä (tavallinen kättely), jotta puuttuva vastaanottaja selviää yhtä
-nopeasti kuin ennenkin. Jos pikalähetys meni perille mutta DONE katosi, B
-tunnistaa uuden aloituksen tunnisteen ja kuittaa uudelleen.
+If the message fits in one frame (at most 64 bytes), it travels along with
+the first START frame and B answers directly with a DONE frame.
+If the start is not answered, the retries are short START frames without the
+message (the ordinary handshake), so that a missing receiver is discovered as
+quickly as before. If the inline start was delivered but the DONE was lost, B
+recognises the identifier of the new start and acknowledges again.
 
-Mitattu simulaatiossa (15 profiilia, 60 merkin linkki, mediaani nimellisoloissa):
+Measured in simulation (15 profiles, 60-character link, median in nominal conditions):
 
-| tapa | siirtoaika | onnistuminen | alin SNR, huone |
+| method | transfer time | success | min SNR, room |
 |---|---|---|---|
-| erillinen kättely | 4,24 s | 93,6 % | -6 dB |
-| pikalähetys | 2,82 s | 93,9 % | -6 dB |
+| separate handshake | 4.24 s | 93.6 % | -6 dB |
+| inline start | 2.82 s | 93.9 % | -6 dB |
 
-Onnistumisen puuttuvat prosentit tulevat `halli`-profiilista, joka ei toimi
-kummallakaan tavalla. Pikalähetys on oletus (`LinkConfig::inline_start`).
+The missing percent of success come from the `hall` profile, which does not
+work with either method. Inline start is the default (`LinkConfig::inline_start`).
 
-## 6. Aika-arviot
+## 6. Time estimates
 
-**Mitattu simulaatiossa** (`soundpaste bench`, `soundpaste session`): 60 merkin
-linkki 2,8 s pikalähetyksellä ja 4,2 s kättelyllä; 512 tavua 15,4–16,1 s
-ryöppynä, 21,5–24,8 s kehyskohtaisella kuittauksella ja 17,1–18,6 s kolmen
-kehyksen ryöpyillä. Vastaanottajan puuttuminen selviää 8–11 sekunnissa.
-Alla olevat laskelmat tehtiin ennen toteutusta, ja ne osuivat mittauksiin
-muutaman prosentin tarkkuudella.
+**Measured in simulation** (`soundpaste bench`, `soundpaste session`): 60-character
+link 2.8 s with inline start and 4.2 s with the handshake; 512 bytes 15.4–16.1 s
+as a burst, 21.5–24.8 s with per-frame acks and 17.1–18.6 s with bursts of
+three frames. A missing receiver is discovered in 8–11 seconds.
+The calculations below were made before the implementation, and they matched
+the measurements to within a few percent.
 
-Kehysten kestot ehdotetuilla parametreilla (50 ms/symboli, 4 tavua/symboli):
+Frame durations with the proposed parameters (50 ms/symbol, 4 bytes/symbol):
 
-| kehys | L | koodisana | symboleja | kesto |
+| frame | L | codeword | symbols | duration |
 |---|---|---|---|---|
-| START | 11 | 20 tavua | 5 | 0,49 s |
-| START_ACK | 5 | 12 | 3 | 0,39 s |
-| DATA, 60 tavua | 64 | 100 | 25 | 1,49 s |
-| DATA, 64 tavua | 68 | 108 | 27 | 1,59 s |
-| ACK | 6 | 12 | 3 | 0,39 s |
-| DONE | 7 | 16 | 4 | 0,44 s |
+| START | 11 | 20 bytes | 5 | 0.49 s |
+| START_ACK | 5 | 12 | 3 | 0.39 s |
+| DATA, 60 bytes | 64 | 100 | 25 | 1.49 s |
+| DATA, 64 bytes | 68 | 108 | 27 | 1.59 s |
+| ACK | 6 | 12 | 3 | 0.39 s |
+| DONE | 7 | 16 | 4 | 0.44 s |
 
-**60 merkin linkki, kaikki onnistuu ensimmäisellä kerralla:**
+**60-character link, everything succeeds on the first try:**
 
-| vaihe | kesto |
+| phase | duration |
 |---|---|
-| kanavan kuuntelu | 0,20 s |
-| START | 0,49 s |
-| suunnanvaihto (150 ms + ääniviiveet noin 200 ms) | 0,35 s |
-| START_ACK | 0,39 s |
-| suunnanvaihto | 0,35 s |
-| DATA | 1,49 s |
-| suunnanvaihto | 0,35 s |
-| DONE | 0,44 s |
-| **yhteensä** | **noin 4,1 s** |
+| channel listen | 0.20 s |
+| START | 0.49 s |
+| change of direction (150 ms + audio latencies about 200 ms) | 0.35 s |
+| START_ACK | 0.39 s |
+| change of direction | 0.35 s |
+| DATA | 1.49 s |
+| change of direction | 0.35 s |
+| DONE | 0.44 s |
+| **total** | **about 4.1 s** |
 
-Nettonopeus koko sessiolle on noin 15 tavua/s (v0: 10,8 tavua/s ilman
-kuittauksia ja ilman toimivuutta kaiussa). Vaihteluväli ääniviiveiden mukaan
-on arviolta 3,8–5 s.
+The net rate for the whole session is about 15 bytes/s (v0: 10.8 bytes/s
+without acks and without working in echo). The range depending on the audio
+latencies is an estimated 3.8–5 s.
 
-**Enimmäispituinen viesti (512 tavua):** aloitus 1,8 s + 8 datakehystä
-(8 × 1,64 s = 13,1 s) + suunnanvaihto ja DONE 0,8 s = **noin 15,5 s**.
-Yksi uudelleenlähetyskierros yhdelle kehykselle lisää noin 2,7 s.
+**Maximum-length message (512 bytes):** start 1.8 s + 8 data frames
+(8 × 1.64 s = 13.1 s) + change of direction and DONE 0.8 s = **about 15.5 s**.
+One retransmission round for one frame adds about 2.7 s.
 
-## 7. Laajennettavuus
+## 7. Extensibility
 
-Näitä ei toteuteta nyt, mutta rakenne ei sulje niitä pois:
+These are not implemented now, but the structure does not rule them out:
 
-- **Nopeampi tila:** otsakkeen tilatunniste (5 bittiä) valitsee hyötykuorman
-  modulaation. START_ACK kertoo vastaanottajan signaalin laadun, ja A voi
-  valita datakehyksille nopeamman tilan. Otsake ja kuittaukset pysyvät
-  perustilassa.
-- **Lähes kuulumaton tila (18–20 kHz):** mitattu vaste on siellä noin 12 dB
-  heikompi mutta käyttökelpoinen. Tila tarvitsee oman alkumerkin (pyyhkäisy
-  eri kaistalla), eli vastaanottimeen tulee toinen ilmaisin rinnalle.
-  `PhyKind` ja sävelristikon parametrit (alataajuus, sävelväli, alikanavien
-  määrä) on tehty tätä varten.
-- **Kestävä tila kovaan meluun:** ensimmäisessä versiossa ei ole hitaampaa
-  varatilaa (päätös 2026-11-11: kokeillaan ilman ja lisätään, jos käytäntö
-  vaatii). Lisääminen on mahdollista kolmen rakenneratkaisun ansiosta:
-  1. Aaltomuodon kaikki parametrit (sävelten ja alikanavien määrä, symbolin
-     pituus, pariteetin osuus, alkumerkki) ovat yhdessä rakenteessa
-     (`MfskParams`), ja jokainen parametrijoukko on oma `PhyKind`-arvonsa.
-     Kestävä tila on uusi rivi taulukossa, esimerkiksi 8 alikanavaa, 80 ms:n
-     symbolit ja pariteettia yhtä paljon kuin dataa.
-  2. Koska aloitus- ja kuittauskehysten pitää kestää vähintään yhtä hyvin
-     kuin datan, kestävä tila tarvitsee oman alkumerkkinsä (esim. laskeva
-     pyyhkäisy), josta vastaanotin tunnistaa myös otsakkeen modulaation.
-     Vastaanotin voi ajaa useaa ilmaisinta rinnakkain; sama mekanismi
-     palvelee lähes kuulumatonta tilaa.
-  3. Linkkikerros saa jokaisen kehyksen mukana tiedon tilasta ja antaa tilan
-     jokaiselle lähetettävälle kehykselle, joten se voi vaihtaa tilaa
-     laaturaportin tai epäonnistuneiden kierrosten perusteella.
-- **Nopeuden sovitus:** START_ACK- ja ACK-kehysten laatutavut ovat jo
-  protokollassa.
-- **Salaus:** kehyksen lippu 3 on varattu. Salaus koskisi DATA-kehysten
-  sisältöä ja START-kehyksen CRC-32:ta, ei kehysrakennetta.
-- **Versiointi:** otsakkeen kolme versiobittiä. Tuntematon versio ohitetaan
-  hiljaa.
+- **Faster mode:** the mode identifier of the header (5 bits) selects the
+  payload modulation. START_ACK tells the receiver's signal quality, and A can
+  choose a faster mode for the data frames. The header and the acks stay in
+  the base mode.
+- **Nearly inaudible mode (18–20 kHz):** the measured response there is about
+  12 dB weaker but usable. The mode needs its own preamble (a chirp on a
+  different band), i.e. a second detector is added alongside in the receiver.
+  `PhyKind` and the tone-grid parameters (lowest frequency, tone spacing,
+  number of subchannels) are made for this.
+- **Robust mode for heavy noise:** the first version has no slower fallback
+  mode (decision 2026-11-11: we try without and add it if practice requires).
+  Adding it is possible thanks to three structural choices:
+  1. All parameters of the waveform (number of tones and subchannels, symbol
+     length, share of parity, preamble) are in one structure (`MfskParams`),
+     and every parameter set is its own `PhyKind` value. The robust mode is a
+     new row in the table, for example 8 subchannels, 80 ms symbols and as
+     much parity as data.
+  2. Because the start and ack frames must hold up at least as well as the
+     data, the robust mode needs its own preamble (e.g. a falling chirp), from
+     which the receiver also recognises the modulation of the header. The
+     receiver can run several detectors in parallel; the same mechanism serves
+     the nearly inaudible mode.
+  3. The link layer gets the mode along with every frame and gives the mode
+     for every frame to be sent, so it can switch modes on the basis of the
+     quality report or failed rounds.
+- **Rate adaptation:** the quality bytes of the START_ACK and ACK frames are
+  already in the protocol.
+- **Encryption:** frame flag 3 is reserved. Encryption would apply to the
+  content of the DATA frames and to the CRC-32 of the START frame, not to the
+  frame structure.
+- **Versioning:** the three version bits of the header. An unknown version is
+  silently ignored.
 
-## 8. Tunnetut rajoitukset
+## 8. Known limitations
 
-- **Vain kaksi laitetta.** Jos kuuloetäisyydellä on useampi vastaanottaja,
-  kaikki vastaavat START-kehykseen yhtä aikaa ja kuittaukset törmäävät.
-  Lähettäjä näkee tämän vastaanottajan puuttumisena tai epäonnistuneena
-  siirtona. Ratkaisu vaatisi vastaanottajan tunnisteen ja satunnaistetun
-  vastausviiveen, eikä sitä tehdä ensimmäisessä versiossa.
-- **Ei salausta eikä todennusta.** Kuka tahansa kuuloetäisyydellä voi
-  vastaanottaa viestin tai lähettää oman. Käyttöliittymä kertoo tämän, ja
-  vastaanotettu teksti näytetään aina pelkkänä tekstinä.
-- **Täsmälleen yhtäaikainen lähetys ei aina ratkea.** Jos molemmat painavat
-  Lähetä alle noin 0,2 sekunnin sisällä toisistaan, aloitukset törmäävät ja
-  kumpikin yrittää uudelleen satunnaisen ajan (0,2–2,2 s) kuluttua. Jos
-  arvotut ajat osuvat taas alle 0,2 s:n päähän toisistaan (alkumerkin
-  havaitsemisviive), törmäys toistuu. Kehystason testissä yli 93 % tapauksista
-  ratkeaa kolmella yrityksellä; loput päättyvät molemmilla ilmoitukseen
-  "vastaanottajaa ei löytynyt". Jos painallusten väli on yli 0,3 s, tilanne
-  ratkeaa aina.
-- **Hyvin kaikuisa tila.** Kun jälkikaiunta-aika on yli noin sekunnin ja kaiku
-  on suoraa ääntä voimakkaampi (`halli`-profiili), hyötykuorman virheet
-  ylittävät virheenkorjauksen kapasiteetin eikä uudelleenlähetys auta.
-- **Tunnisteiden törmäys.** 16-bittinen tunniste voi osua samaksi kuin
-  hiljattain vastaanotettu (1/65536 per viesti muistin 8 paikkaa kohden).
-  Silloin B luulisi uutta viestiä kaksoiskappaleeksi. Muistissa verrataan
-  siksi myös CRC-32:ta ja pituutta.
-- **Liikkuvat laitteet.** 25 Hz:n sävelväli sietää Doppler-siirtymää vain
-  vähän (kävelyvauhti 7 kHz:n taajuudella on noin 20 Hz). Laitteiden oletetaan
-  olevan paikallaan.
-- **Kuuluvuus.** Signaali on kuultava, laajakaistainen sirinä.
+- **Only two devices.** If there are several receivers within earshot, all of
+  them answer the START frame at the same time and the acks collide. The
+  sender sees this as a missing receiver or as a failed transfer. A solution
+  would require a receiver identifier and a randomised response delay, and it
+  is not done in the first version.
+- **No encryption and no authentication.** Anyone within earshot can receive
+  the message or send their own. The user interface says so, and received text
+  is always shown as plain text.
+- **An exactly simultaneous send is not always resolved.** If both press Send
+  within less than about 0.2 seconds of each other, the starts collide and
+  each retries after a random time (0.2–2.2 s). If the drawn times again fall
+  within less than 0.2 s of each other (the preamble detection delay), the
+  collision repeats. In the frame-level test more than 93 % of cases are
+  resolved within three attempts; the rest end on both sides with the notice
+  "no receiver found". If the interval between the presses is more than 0.3 s,
+  the situation is always resolved.
+- **Very reverberant space.** When the reverberation time is more than about a
+  second and the echo is stronger than the direct sound (the `hall` profile),
+  the payload errors exceed the capacity of the error correction and
+  retransmission does not help.
+- **Identifier collision.** The 16-bit identifier can come out the same as a
+  recently received one (1/65536 per message for each of the 8 slots of the
+  memory). B would then take the new message for a duplicate. The memory
+  therefore also compares the CRC-32 and the length.
+- **Moving devices.** The 25 Hz tone spacing tolerates only a little Doppler
+  shift (walking speed at a frequency of 7 kHz is about 20 Hz). The devices
+  are assumed to be stationary.
+- **Audibility.** The signal is an audible, wideband chirping sound.
 
-## 9. Mitä on mitattu ja mitä ei
+## 9. What has been measured and what has not
 
-| väite | peruste |
+| claim | basis |
 |---|---|
-| kaistan valinta, melun spektri, särö, oman kaiun kesto | mitattu oikealla äänellä Macilla (yksi laite, yksi huone) |
-| sävelhypyn hyöty, 4-FSK vs. 16-FSK, PSK:n heikkous kaiussa | simulaatio: synteettiset huoneet ja mitattu impulssivaste |
-| toisen koneen kuulema kanava | **arvio** (suora ääni -14 dB), ei mittaus |
-| laitteiden ääniviive (200 ms), suunnanvaihdon kesto | **oletus**, mitataan kehissä D ja E |
-| kehysten kestot ja 4,1 s:n kokonaisaika | laskettu parametreista, ei vielä toteutettu |
-| alkumerkin havaitseminen ja ajoitus | ei vielä mitattu (vertailukoe käytti ihanteellista ajoitusta) |
-| Reed–Solomonin koodisuhde, tavujen sijoittelu | lähtöarvo, vaihe 4 mittaa |
+| choice of band, noise spectrum, distortion, duration of the own echo | measured over real audio on the Mac (one device, one room) |
+| benefit of tone hopping, 4-FSK vs. 16-FSK, weakness of PSK in echo | simulation: synthetic rooms and the measured impulse response |
+| the channel heard by the other machine | **estimate** (direct sound -14 dB), not a measurement |
+| audio latency of the devices (200 ms), duration of a change of direction | **assumption**, measured in loops D and E |
+| frame durations and the total time of 4.1 s | calculated from the parameters, not yet implemented |
+| preamble detection and timing | not yet measured (the comparison experiment used ideal timing) |
+| Reed–Solomon code rate, placement of bytes | initial value, stage 4 measures |
 
-**Huipputason leikkaus.** Vertailukoe toistettiin niin, että lähetteen
-huiput leikattiin 6 dB tehollisarvon yläpuolelta (kaiuttimen rajallinen
-huipputaso), jolloin PAPR putoaa 13 dB:stä 6 dB:iin
-(`bench/kokeet/20261111-modulaatiovertailu-leikattu.txt`). Leikkaus ei
-heikentänyt yhtäkään FSK-vaihtoehtoa mitattavasti: ehdotetun 16 × 4-FSK:n
-virhesuhde kaikuisassa huoneessa oli 0,49 % (ilman leikkausta 0,47 %).
-Lähetteen huiput voi siis rajata ja nostaa keskitehoa noin 7 dB, joten
-rinnakkaisten sävelten tehohinta on käytännössä noin 5 dB eikä 12 dB.
-Tämä on simulaatiotulos ihanteellisella leikkurilla; oikean kaiuttimen
-käytös mitataan kehässä C.
+**Peak clipping.** The comparison experiment was repeated so that the peaks of
+the transmit signal were clipped 6 dB above the RMS value (the limited peak
+level of a speaker), whereby the PAPR drops from 13 dB to 6 dB
+(`bench/experiments/20261111-modulation-comparison-clipped.txt`). Clipping did
+not measurably weaken any FSK alternative: the error rate of the proposed
+16 × 4-FSK in the reverberant room was 0.49 % (without clipping 0.47 %).
+The peaks of the transmit signal can therefore be limited and the average
+power raised by about 7 dB, so the power cost of parallel tones is in practice
+about 5 dB and not 12 dB. This is a simulation result with an ideal clipper;
+the behaviour of a real speaker is measured in loop C.
 
-## 10. Kysymykset ja päätökset
+## 10. Questions and decisions
 
-Tila 2026-11-11: kysymyksiin 1–4 ei tullut erillistä vastausta, joten
-toteutus noudattaa ehdotuksia: (1) pikalähetys on parametri ja mittausten
-perusteella oletuksena päällä (luku 5.8), (2) kaista 1–7,4 kHz, (3)
-enimmäispituus 512 tavua, (4) yhtäaikaisessa lähetyksessä väistänyt viesti
-lähtee automaattisesti. Kestävä tila kovaan meluun jätettiin pois (luku 7).
-Kaikki neljä ovat yhden rivin muutoksia (`LinkConfig`, `MfskParams`).
+Status 2026-11-11: questions 1–4 received no separate answer, so the
+implementation follows the proposals: (1) inline start is a parameter and, on
+the basis of the measurements, on by default (section 5.8), (2) band
+1–7.4 kHz, (3) maximum length 512 bytes, (4) in a simultaneous send the
+message that yielded is sent automatically. The robust mode for heavy noise
+was left out (section 7). All four are one-line changes (`LinkConfig`, `MfskParams`).
 
-Alkuperäiset kysymykset:
+The original questions:
 
-1. **Lyhyt viesti aloituskehyksessä?** Tehtävänanto ehdottaa erillistä
-   kättelyä (START -> START_ACK -> DATA -> DONE), ja suunnitelma noudattaa
-   sitä. Jos viesti mahtuu yhteen kehykseen, sen voisi lähettää
-   START-kehyksen mukana, jolloin 60 merkin linkki vie noin 2,6 s eikä 4,1 s.
-   Hinta: kun vastaanottajaa ei ole, epäonnistuminen selviää hitaammin (noin
-   9 s eikä 6 s), ja laaturaporttia ei saada ennen dataa. Ehdotan, että teen
-   tämän linkkikerroksen parametriksi ja valitsen oletuksen vaiheen 5
-   mittausten perusteella. Sopiiko?
-2. **Kaista 1–7,4 kHz.** Signaali kuulostaa noin 0,5–3 sekunnin sirinältä.
-   Kapeampi kaista (esim. 1,5–4,7 kHz) puolittaisi nopeuden. Onko
-   äänen luonteella väliä tässä vaiheessa?
-3. **Enimmäispituus 512 tavua** (noin 15 s). Riittääkö, vai haluatko enemmän
-   (1024 tavua veisi noin 30 s)?
-4. **Onko jokin poikkeustilanne käsitelty toisin kuin haluaisit?** Erityisesti
-   yhtäaikainen lähetys: häviäjän viesti lähtee automaattisesti vastaanoton
-   jälkeen ilman uutta napinpainallusta.
+1. **A short message in the start frame?** The task specification proposes a
+   separate handshake (START -> START_ACK -> DATA -> DONE), and the design
+   follows it. If the message fits in one frame, it could be sent along with
+   the START frame, in which case a 60-character link takes about 2.6 s
+   instead of 4.1 s. The price: when there is no receiver, the failure is
+   discovered more slowly (about 9 s instead of 6 s), and no quality report is
+   obtained before the data. I propose making this a link-layer parameter and
+   choosing the default on the basis of the stage 5 measurements. Is that OK?
+2. **Band 1–7.4 kHz.** The signal sounds like a chirping of about 0.5–3
+   seconds. A narrower band (e.g. 1.5–4.7 kHz) would halve the rate. Does the
+   character of the sound matter at this stage?
+3. **Maximum length 512 bytes** (about 15 s). Is that enough, or do you want
+   more (1024 bytes would take about 30 s)?
+4. **Is some exceptional situation handled differently from what you would
+   like?** In particular the simultaneous send: the loser's message is sent
+   automatically after the reception without a new button press.

@@ -1,11 +1,11 @@
-//! Kehityspalvelin (vain kehityskäyttöön, ei osa julkaistavaa sivua).
+//! Dev server (development only, not part of the published page).
 //!
-//! - tarjoilee sivun lähiverkkoon ja lisää siihen testiaseman koodin (`dev/dev.js`)
-//! - kertoo versiotunnisteen, jotta testiasema huomaa uuden wasm-moduulin tai sivun
-//! - ottaa vastaan testiaseman lokit ja mikrofoniäänitteet
-//! - välittää komennot (`soundpaste remote ...`) testiasemalle
+//! - serves the page to the local network and injects the test-station code (`dev/dev.js`)
+//! - reports a version tag so the test station notices a new wasm module or page
+//! - receives the test station's logs and microphone recordings
+//! - relays commands (`soundpaste remote ...`) to the test station
 //!
-//! Toteutus on tarkoituksella pieni: std::net, säie per yhteys, ei riippuvuuksia.
+//! Deliberately small: std::net, one thread per connection, no dependencies.
 
 use crate::args::Args;
 use crate::bench;
@@ -26,11 +26,11 @@ const MAX_BODY: usize = 64 << 20;
 
 #[derive(Default)]
 struct Shared {
-    /// Komentojono testiasemille: (järjestysnumero, rivi).
+    /// Command queue for test stations: (sequence number, line).
     commands: Vec<(u64, String)>,
-    /// Montako seuraavaa sessioäänitettä kopioidaan korpukseen.
+    /// How many of the next session recordings are copied to the corpus.
     collect: u32,
-    /// Asemien viimeisin elonmerkki: (kellonaika, kuvaus).
+    /// Latest sign of life from each station: (time of day, description).
     seen: HashMap<String, (String, String)>,
 }
 
@@ -130,7 +130,7 @@ fn content_type(path: &str) -> &'static str {
     }
 }
 
-/// Sivun tiedostot: (osoite, tiedosto levyllä).
+/// Page files: (URL path, file on disk).
 const PAGE_FILES: &[(&str, &str)] = &[("/index.html", "web/index.html"), ("/style.css", "web/style.css"), ("/app.js", "web/app.js"), ("/worklet.js", "web/worklet.js"), ("/dev/dev.js", "dev/dev.js")];
 
 fn version() -> (u32, u32) {
@@ -144,7 +144,7 @@ fn version() -> (u32, u32) {
 fn clean_id(s: &str) -> String {
     let id: String = s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(24).collect::<String>().to_lowercase();
     if id.is_empty() {
-        "asema".into()
+        "station".into()
     } else {
         id
     }
@@ -160,23 +160,23 @@ fn clock() -> String {
 }
 
 fn save_recording(req: &Request, shared: &Mutex<Shared>) -> Result<String, String> {
-    let station = clean_id(req.query.get("asema").map_or("", |s| s));
-    let kind = req.query.get("tyyppi").map_or("muu", |s| s.as_str());
+    let station = clean_id(req.query.get("station").map_or("", |s| s));
+    let kind = req.query.get("kind").map_or("other", |s| s.as_str());
     let w = modem_core::wav::decode(&req.body).map_err(|e| e.to_string())?;
     let secs = w.samples.len() as f64 / w.sample_rate as f64;
-    let device = req.query.get("laite").cloned().unwrap_or_default();
-    let note = req.query.get("huom").cloned().unwrap_or_default();
+    let device = req.query.get("device").cloned().unwrap_or_default();
+    let note = req.query.get("note").cloned().unwrap_or_default();
     let now = bench::utc_now();
     match kind {
-        "kanava" => {
-            // Mac soitti pyyhkäisyn ja testiasema äänitti: kanava Macista asemalle.
+        "channel" => {
+            // The Mac played the sweep and the test station recorded: channel from the Mac to the station.
             let gain: f32 = req.query.get("gain").and_then(|g| g.parse().ok()).unwrap_or(0.3);
             let sweep = Sweep { amplitude: gain, ..Sweep::default() };
             let m = measure::analyze(&w.samples, w.sample_rate as f64, &sweep)?;
             let id = format!("{now}-mac-{station}-g{:03.0}", gain * 100.0);
-            println!("[{}] {station}: kanavamittaus Mac -> {station} ({secs:.1} s)", clock());
+            println!("[{}] {station}: channel measurement Mac -> {station} ({secs:.1} s)", clock());
             crate::acoustic::print_measurement(&m);
-            let holdout = req.query.get("vertailu").map_or(false, |v| v == "1");
+            let holdout = req.query.get("holdout").map_or(false, |v| v == "1");
             crate::acoustic::store_channel(
                 &id,
                 w.sample_rate,
@@ -185,12 +185,12 @@ fn save_recording(req: &Request, shared: &Mutex<Shared>) -> Result<String, Strin
                 &m,
                 vec![
                     ("id", Json::str(&id)),
-                    ("kind", Json::str("kanava")),
+                    ("kind", Json::str("channel")),
                     ("time_utc", Json::str(&now)),
-                    ("device", Json::str(&format!("kaiutin: Mac; mikrofoni: {station} ({device})"))),
+                    ("device", Json::str(&format!("speaker: Mac; microphone: {station} ({device})"))),
                     ("sample_rate", Json::num(w.sample_rate)),
                     ("gain", Json::num(gain)),
-                    ("distance_m", Json::opt(req.query.get("etaisyys").and_then(|d| d.parse().ok()))),
+                    ("distance_m", Json::opt(req.query.get("distance").and_then(|d| d.parse().ok()))),
                     ("note", Json::str(&note)),
                     ("holdout", Json::Bool(holdout)),
                     ("label", Json::str(&format!("mac-{station}"))),
@@ -198,19 +198,19 @@ fn save_recording(req: &Request, shared: &Mutex<Shared>) -> Result<String, Strin
             )?;
             Ok(id)
         }
-        "sessio" => {
-            let text = req.query.get("teksti").cloned().unwrap_or_default();
+        "session" => {
+            let text = req.query.get("text").cloned().unwrap_or_default();
             let ok = req.query.get("ok").map_or(false, |v| v == "1");
             let phy = PhyKind::DEFAULT.name();
-            let id = format!("{now}-{station}-sessio-{phy}");
+            let id = format!("{now}-{station}-session-{phy}");
             let meta = |holdout: bool| {
                 Json::obj(vec![
                     ("id", Json::str(&id)),
-                    ("kind", Json::str("sessio")),
+                    ("kind", Json::str("session")),
                     ("time_utc", Json::str(&now)),
                     ("device", Json::str(&format!("{station} ({device})"))),
                     ("sample_rate", Json::num(w.sample_rate)),
-                    ("distance_m", Json::opt(req.query.get("etaisyys").and_then(|d| d.parse().ok()))),
+                    ("distance_m", Json::opt(req.query.get("distance").and_then(|d| d.parse().ok()))),
                     ("note", Json::str(&note)),
                     ("holdout", Json::Bool(holdout)),
                     ("phy", Json::str(phy)),
@@ -218,8 +218,8 @@ fn save_recording(req: &Request, shared: &Mutex<Shared>) -> Result<String, Strin
                     ("ok_when_recorded", Json::Bool(ok)),
                 ])
             };
-            // Kaikki talteen kehityshakemistoon; korpukseen vain pyydettäessä.
-            let dir = Path::new(DEV_DATA).join("aanitteet");
+            // Everything is kept in the dev directory; to the corpus only on request.
+            let dir = Path::new(DEV_DATA).join("recordings");
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             std::fs::write(dir.join(format!("{id}.wav")), &req.body).map_err(|e| e.to_string())?;
             std::fs::write(dir.join(format!("{id}.json")), meta(false).pretty()).map_err(|e| e.to_string())?;
@@ -237,15 +237,15 @@ fn save_recording(req: &Request, shared: &Mutex<Shared>) -> Result<String, Strin
                 std::fs::write(base.with_extension("wav"), &req.body).map_err(|e| e.to_string())?;
                 std::fs::write(base.with_extension("json"), meta(corpus::auto_holdout(&id)).pretty()).map_err(|e| e.to_string())?;
             }
-            println!("[{}] {station}: sessioäänite {secs:.1} s, {} ({}){}", clock(), if ok { "ok" } else { "EPÄONNISTUI" }, text.chars().take(40).collect::<String>(), if to_corpus { " -> korpus" } else { "" });
+            println!("[{}] {station}: session recording {secs:.1} s, {} ({}){}", clock(), if ok { "ok" } else { "FAILED" }, text.chars().take(40).collect::<String>(), if to_corpus { " -> corpus" } else { "" });
             Ok(id)
         }
         _ => {
-            let dir = Path::new(DEV_DATA).join("aanitteet");
+            let dir = Path::new(DEV_DATA).join("recordings");
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             let id = format!("{now}-{station}-{}", clean_id(kind));
             std::fs::write(dir.join(format!("{id}.wav")), &req.body).map_err(|e| e.to_string())?;
-            println!("[{}] {station}: äänite {secs:.1} s -> {}/{id}.wav", clock(), dir.display());
+            println!("[{}] {station}: recording {secs:.1} s -> {}/{id}.wav", clock(), dir.display());
             Ok(id)
         }
     }
@@ -257,7 +257,7 @@ fn handle(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
     match (req.method.as_str(), path) {
         ("GET", "/soundpaste.wasm") => match std::fs::read(WASM_PATH) {
             Ok(bytes) => respond(&mut stream, "200 OK", "application/wasm", &bytes),
-            Err(_) => respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", "wasm puuttuu: aja ./rakenna.sh".as_bytes()),
+            Err(_) => respond(&mut stream, "404 Not Found", "text/plain; charset=utf-8", "wasm missing: run ./build.sh".as_bytes()),
         },
         ("GET", "/dev/version") => {
             let (page, wasm) = version();
@@ -265,11 +265,11 @@ fn handle(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
         }
         ("GET", "/dev/commands") => {
             let after: u64 = req.query.get("after").and_then(|v| v.parse().ok()).unwrap_or(0);
-            let station = clean_id(req.query.get("asema").map_or("", |s| s));
+            let station = clean_id(req.query.get("station").map_or("", |s| s));
             let mut s = shared.lock().unwrap();
-            s.seen.insert(station, (clock(), req.query.get("tila").cloned().unwrap_or_default()));
+            s.seen.insert(station, (clock(), req.query.get("mode").cloned().unwrap_or_default()));
             let latest = s.commands.last().map_or(0, |c| c.0);
-            // after = 0: uusi sivu aloittaa nykyhetkestä eikä toista vanhoja komentoja.
+            // after = 0: a fresh page starts from now and does not replay old commands.
             let list: Vec<Json> = if after == 0 { Vec::new() } else { s.commands.iter().filter(|c| c.0 > after).map(|c| Json::str(&c.1)).collect() };
             respond(&mut stream, "200 OK", "application/json", Json::obj(vec![("seq", Json::num(latest.max(1) as f64)), ("commands", Json::Arr(list))]).pretty().as_bytes());
         }
@@ -277,31 +277,31 @@ fn handle(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
             let s = shared.lock().unwrap();
             let mut out = String::new();
             for (name, (time, state)) in &s.seen {
-                out += &format!("{name}: viimeksi {time} UTC, {state}\n");
+                out += &format!("{name}: last seen {time} UTC, {state}\n");
             }
             if out.is_empty() {
-                out = "yhtään testiasemaa ei ole ilmoittautunut\n".into();
+                out = "no test station has checked in\n".into();
             }
-            out += &format!("korpukseen kerättäviä äänitteitä jäljellä: {}\n", s.collect);
+            out += &format!("recordings still to be collected into the corpus: {}\n", s.collect);
             respond(&mut stream, "200 OK", "text/plain; charset=utf-8", out.as_bytes());
         }
         ("POST", "/dev/command") => {
             let line = String::from_utf8_lossy(&req.body).trim().to_string();
             let mut s = shared.lock().unwrap();
             let mut words = line.split_whitespace();
-            if words.next() == Some("keraa") {
+            if words.next() == Some("collect") {
                 s.collect = words.next().and_then(|n| n.parse().ok()).unwrap_or(5);
                 let n = s.collect;
-                respond(&mut stream, "200 OK", "text/plain; charset=utf-8", format!("seuraavat {n} sessioäänitettä kopioidaan korpukseen\n").as_bytes());
+                respond(&mut stream, "200 OK", "text/plain; charset=utf-8", format!("the next {n} session recordings will be copied to the corpus\n").as_bytes());
                 return;
             }
             let seq = s.commands.last().map_or(1, |c| c.0) + 1;
             s.commands.push((seq, line.clone()));
-            println!("[{}] komento #{seq}: {line}", clock());
-            respond(&mut stream, "200 OK", "text/plain; charset=utf-8", format!("komento #{seq} jonossa: {line}\n").as_bytes());
+            println!("[{}] command #{seq}: {line}", clock());
+            respond(&mut stream, "200 OK", "text/plain; charset=utf-8", format!("command #{seq} queued: {line}\n").as_bytes());
         }
         ("POST", "/dev/log") => {
-            let station = clean_id(req.query.get("asema").map_or("", |s| s));
+            let station = clean_id(req.query.get("station").map_or("", |s| s));
             let text = String::from_utf8_lossy(&req.body);
             let _ = std::fs::create_dir_all(DEV_DATA);
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(Path::new(DEV_DATA).join(format!("{station}.log"))) {
@@ -312,10 +312,10 @@ fn handle(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
             }
             respond(&mut stream, "204 No Content", "text/plain", b"");
         }
-        ("POST", "/dev/aanite") => match save_recording(&req, &shared) {
+        ("POST", "/dev/recording") => match save_recording(&req, &shared) {
             Ok(id) => respond(&mut stream, "200 OK", "text/plain; charset=utf-8", id.as_bytes()),
             Err(e) => {
-                println!("[{}] äänitteen käsittely epäonnistui: {e}", clock());
+                println!("[{}] processing the recording failed: {e}", clock());
                 respond(&mut stream, "400 Bad Request", "text/plain; charset=utf-8", e.as_bytes());
             }
         },
@@ -323,21 +323,21 @@ fn handle(mut stream: TcpStream, shared: Arc<Mutex<Shared>>) {
             Some((_, file)) => match std::fs::read(file) {
                 Ok(mut bytes) => {
                     if p == "/index.html" {
-                        // Testiaseman koodi lisätään vain kehityspalvelimessa.
+                        // The test-station code is injected only by the dev server.
                         let html = String::from_utf8_lossy(&bytes).replace("</body>", "<script src=\"./dev/dev.js\"></script>\n</body>");
                         bytes = html.into_bytes();
                     }
                     respond(&mut stream, "200 OK", content_type(p), &bytes);
                 }
-                Err(_) => respond(&mut stream, "404 Not Found", "text/plain", b"ei ole"),
+                Err(_) => respond(&mut stream, "404 Not Found", "text/plain", b"not found"),
             },
-            None => respond(&mut stream, "404 Not Found", "text/plain", b"ei ole"),
+            None => respond(&mut stream, "404 Not Found", "text/plain", b"not found"),
         },
         _ => respond(&mut stream, "405 Method Not Allowed", "text/plain", b""),
     }
 }
 
-/// Tämän koneen osoite lähiverkossa (ei lähetä mitään: UDP-pistoke vain valitsee reitin).
+/// This machine's address on the local network (sends nothing: the UDP socket only picks a route).
 fn lan_ip() -> Option<String> {
     let s = UdpSocket::bind("0.0.0.0:0").ok()?;
     s.connect("192.0.2.1:9").ok()?;
@@ -354,16 +354,16 @@ pub fn cmd_serve(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &[])?;
     let port: u16 = a.num("port", 8787)?;
     if !Path::new(WASM_PATH).exists() {
-        return Err(format!("{WASM_PATH} puuttuu: aja ensin ./rakenna.sh"));
+        return Err(format!("{WASM_PATH} is missing: run ./build.sh first"));
     }
-    let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|e| format!("portti {port}: {e}"))?;
-    println!("KEHITYSPALVELIN (vain kehityskäyttöön)");
-    println!("  tämä kone:   http://localhost:{port}/");
+    let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|e| format!("port {port}: {e}"))?;
+    println!("DEV SERVER (development only)");
+    println!("  this machine: http://localhost:{port}/");
     for host in [local_hostname(), lan_ip()].into_iter().flatten() {
-        println!("  lähiverkko:  http://{host}:{port}/?testi=vastaanotto&asema=pc");
+        println!("  local net:    http://{host}:{port}/?test=receive&station=pc");
     }
-    println!("  testitilat:  ?testi=vastaanotto | kaiku | majakka (&vali=20), asema nimetään &asema=nimi");
-    println!("  komennot:    soundpaste remote tila kaiku | laheta <teksti> | pyyhkaisy | aanita 9 kanava | keraa 5 | lataa");
+    println!("  test modes:   ?test=receive | echo | beacon (&interval=20), name the station with &station=name");
+    println!("  commands:     soundpaste remote mode echo | send <text> | sweep | record 9 channel | collect 5 | reload");
     let shared = Arc::new(Mutex::new(Shared::default()));
     for stream in listener.incoming().flatten() {
         let shared = shared.clone();
@@ -373,7 +373,7 @@ pub fn cmd_serve(raw: &[String]) -> Result<ExitCode, String> {
 }
 
 pub fn http(port: u16, method: &str, path: &str, body: &[u8]) -> Result<String, String> {
-    let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| format!("kehityspalvelin ei vastaa portissa {port} ({e}): käynnistä se komennolla soundpaste serve"))?;
+    let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| format!("the dev server is not answering on port {port} ({e}): start it with soundpaste serve"))?;
     let head = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     s.write_all(head.as_bytes()).and_then(|_| s.write_all(body)).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
@@ -382,12 +382,12 @@ pub fn http(port: u16, method: &str, path: &str, body: &[u8]) -> Result<String, 
     Ok(text.split_once("\r\n\r\n").map_or(String::new(), |(_, b)| b.to_string()))
 }
 
-/// `soundpaste remote <komento>`: lähetä komento testiasemille kehityspalvelimen kautta.
+/// `soundpaste remote <command>`: send a command to the test stations through the dev server.
 pub fn cmd_remote(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &[])?;
     let port: u16 = a.num("port", 8787)?;
     let line = a.positional.join(" ");
-    if line.is_empty() || line == "tila" {
+    if line.is_empty() || line == "mode" {
         print!("{}", http(port, "GET", "/dev/status", b"")?);
     } else {
         print!("{}", http(port, "POST", "/dev/command", line.as_bytes())?);
@@ -414,6 +414,6 @@ mod tests {
     #[test]
     fn ids_are_sanitized() {
         assert_eq!(clean_id("../../etc/Passwd"), "etcpasswd");
-        assert_eq!(clean_id(""), "asema");
+        assert_eq!(clean_id(""), "station");
     }
 }

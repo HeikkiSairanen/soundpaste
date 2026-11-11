@@ -1,11 +1,11 @@
-//! soundpaste-modeemin ydin.
+//! Core of the soundpaste modem.
 //!
-//! Kerrokset alhaalta ylös:
-//! - [`dsp`]: FFT, taajuusilmaisimet, konvoluutio, näytteenottotaajuuden muunnos
-//! - [`phy`]: fyysinen kerros, tavut <-> f32-näytteet
-//! - [`sim`]: simuloitu akustinen kanava testejä ja mittauksia varten
+//! Layers from the bottom up:
+//! - [`dsp`]: FFT, frequency detectors, convolution, sample rate conversion
+//! - [`phy`]: physical layer, bytes <-> f32 samples
+//! - [`sim`]: simulated acoustic channel for tests and measurements
 //!
-//! Ytimellä ei ole ulkoisia riippuvuuksia eikä se tiedä selaimesta mitään.
+//! The core has no external dependencies and knows nothing about the browser.
 
 pub mod crc;
 pub mod dsp;

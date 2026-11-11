@@ -1,54 +1,54 @@
-// soundpaste: testiaseman koodi. VAIN KEHITYSKÄYTTÖÖN.
+// soundpaste: test-station code. DEVELOPMENT ONLY.
 //
-// Kehityspalvelin (soundpaste serve) lisää tämän sivulle. Julkaistavassa
-// versiossa tätä tiedostoa ei ole, eikä tuotantosivu ota yhteyttä mihinkään.
+// The dev server (soundpaste serve) injects this into the page. The published
+// version does not contain this file, and the production page contacts nothing.
 //
-// Testiasema on passiivinen: käyttöönoton jälkeen siihen ei tarvitse koskea.
-// - Tila URL-parametrista ?testi=vastaanotto | kaiku | majakka (&vali=20), nimi &asema=pc
-// - Tarkistaa kahden sekunnin välein, onko uusi versio: uusi wasm vaihdetaan
-//   lennossa (mikrofoni pysyy päällä), muuttunut sivu ladataan uudelleen.
-// - Lähettää lokin ja jokaisen session mikrofoniäänitteen kehityspalvelimelle.
-// - Hakee komennot palvelimelta (soundpaste remote ...).
+// The test station is passive: once set up it needs no touching.
+// - Mode from the URL parameter ?test=receive | echo | beacon (&interval=20), name &station=pc
+// - Checks every two seconds for a new version: a new wasm is swapped in live
+//   (the microphone stays on), a changed page is reloaded.
+// - Sends the log and each session's microphone recording to the dev server.
+// - Fetches commands from the server (soundpaste remote ...).
 
 (() => {
   'use strict';
   const sp = window.soundpaste;
   const params = new URLSearchParams(location.search);
-  const station = (params.get('asema') || 'asema').replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'asema';
-  let mode = params.get('testi') || 'vastaanotto';
-  let beaconSeconds = Math.max(8, Number(params.get('vali')) || 20);
+  const station = (params.get('station') || 'station').replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'station';
+  let mode = params.get('test') || 'receive';
+  let beaconSeconds = Math.max(8, Number(params.get('interval')) || 20);
   const BEACON_TEXT = 'https://sairanen.org/soundpaste/?v=Zk3mQ9xT7bLw2RfN8cYh5VpJd';
   const device = navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 120);
 
-  // Näkyvä merkki siitä, että tämä on testiasema.
+  // A visible sign that this is a test station.
   const banner = document.createElement('p');
   banner.className = 'notice warning';
   document.querySelector('main').prepend(banner);
   const showBanner = () => {
-    banner.textContent = `TESTIASEMA "${station}", tila: ${mode}${mode === 'majakka' ? ` (${beaconSeconds} s välein)` : ''}. Lokit ja mikrofoniäänitteet lähetetään kehityspalvelimelle.`;
+    banner.textContent = `TEST STATION "${station}", mode: ${mode}${mode === 'beacon' ? ` (every ${beaconSeconds} s)` : ''}. Logs and microphone recordings are sent to the dev server.`;
   };
   showBanner();
 
-  // ---------------------------------------------------------------- loki palvelimelle
+  // ---------------------------------------------------------------- log to the server
   let pendingLog = [];
   const post = (path, body, type) => fetch(path, { method: 'POST', body, headers: type ? { 'Content-Type': type } : undefined }).catch(() => {});
   setInterval(() => {
     if (!pendingLog.length) return;
     const text = pendingLog.join('\n') + '\n';
     pendingLog = [];
-    post(`./dev/log?asema=${station}`, text, 'text/plain');
+    post(`./dev/log?station=${station}`, text, 'text/plain');
   }, 2000);
 
-  // ---------------------------------------------------------------- äänitteet
-  let sessionStart = 0; // aseman kello (ms), jolloin sessio alkoi
+  // ---------------------------------------------------------------- recordings
+  let sessionStart = 0; // station clock (ms) when the session started
   let lastSentText = '';
 
   async function uploadRecording(kind, query, seconds) {
     const { samples, sampleRate } = await sp.recording();
     const keep = Math.min(samples.length, Math.round(seconds * sampleRate));
     const wav = sp.wavBytes(samples.subarray(samples.length - keep), sampleRate);
-    const q = new URLSearchParams({ asema: station, tyyppi: kind, laite: device, ...query });
-    await post(`./dev/aanite?${q}`, wav, 'audio/wav');
+    const q = new URLSearchParams({ station, kind, device, ...query });
+    await post(`./dev/recording?${q}`, wav, 'audio/wav');
   }
 
   function sessionSeconds() {
@@ -56,11 +56,11 @@
     return Math.min(44, Math.max(4, (now - sessionStart) / 1000 + 3));
   }
 
-  // ---------------------------------------------------------------- tapahtumat
+  // ---------------------------------------------------------------- events
   let beaconTimer = null;
   function scheduleBeacon() {
     clearTimeout(beaconTimer);
-    if (mode !== 'majakka') return;
+    if (mode !== 'beacon') return;
     beaconTimer = setTimeout(() => {
       if (sp.state().ready && !sp.state().sending) {
         lastSentText = BEACON_TEXT;
@@ -85,10 +85,10 @@
         if (e.sub === 0) sessionStart = sp.state().stationNow;
         break;
       case 'received':
-        // Äänite talteen hetken päästä, jotta loppukuittauskin on mukana.
-        setTimeout(() => uploadRecording('sessio', { teksti: e.text, ok: '1', huom: `tila ${mode}, vastaanotettu` }, sessionSeconds()), 1200);
-        if (mode === 'kaiku') {
-          // Kaikutila: sama teksti takaisin uutena viestinä.
+        // Upload the recording a moment later so the final ack is included too.
+        setTimeout(() => uploadRecording('session', { text: e.text, ok: '1', note: `mode ${mode}, received` }, sessionSeconds()), 1200);
+        if (mode === 'echo') {
+          // Echo mode: the same text back as a new message.
           setTimeout(() => {
             lastSentText = e.text;
             sp.send(e.text);
@@ -96,15 +96,15 @@
         }
         break;
       case 'rxAborted':
-        setTimeout(() => uploadRecording('sessio', { teksti: '', ok: '0', huom: `tila ${mode}, vastaanotto keskeytyi` }, sessionSeconds()), 500);
+        setTimeout(() => uploadRecording('session', { text: '', ok: '0', note: `mode ${mode}, receive aborted` }, sessionSeconds()), 500);
         break;
       case 'failed':
-        setTimeout(() => uploadRecording('sessio', { teksti: '', ok: '0', huom: `tila ${mode}, lähetys epäonnistui (syy ${e.reason})` }, sessionSeconds()), 500);
+        setTimeout(() => uploadRecording('session', { text: '', ok: '0', note: `mode ${mode}, send failed (reason ${e.reason})` }, sessionSeconds()), 500);
         break;
     }
   });
 
-  // ---------------------------------------------------------------- versiontarkistus
+  // ---------------------------------------------------------------- version check
   let version = null;
   async function checkVersion() {
     try {
@@ -114,25 +114,25 @@
         return;
       }
       if (v.page !== version.page) {
-        sp.log('sivu on muuttunut, ladataan uudelleen');
+        sp.log('the page has changed, reloading');
         setTimeout(() => location.reload(), 300);
         return;
       }
       if (v.wasm !== version.wasm && sp.state().ready && !sp.state().sending) {
         version = v;
         const buffer = await (await fetch('./soundpaste.wasm', { cache: 'no-store' })).arrayBuffer();
-        sp.log(`uusi modeemi (${buffer.byteLength} tavua) vaihdetaan lennossa`);
+        sp.log(`new modem (${buffer.byteLength} bytes), swapping it in live`);
         sp.reloadWasm(buffer);
       }
     } catch (err) {
-      // Palvelin ei ole päällä: yritetään myöhemmin uudelleen.
+      // The server is not running: try again later.
     }
   }
   setInterval(checkVersion, 2000);
   checkVersion();
 
-  // ---------------------------------------------------------------- komennot
-  // Kanavamittauksen pyyhkäisy: sama signaali kuin komennolla soundpaste measure.
+  // ---------------------------------------------------------------- commands
+  // Channel-measurement sweep: the same signal as soundpaste measure plays.
   function playSweep(amplitude) {
     const ctx = sp.context();
     if (!ctx) return;
@@ -155,50 +155,54 @@
     source.buffer = buffer;
     source.connect(ctx.destination);
     source.start();
-    sp.log(`soitetaan pyyhkäisy, amplitudi ${amplitude}`);
+    sp.log(`playing the sweep, amplitude ${amplitude}`);
   }
 
   let commandSeq = 0;
   async function pollCommands() {
     try {
-      const state = `${mode}${sp.state().ready ? '' : ' (ei käynnissä)'}`;
-      const r = await (await fetch(`./dev/commands?after=${commandSeq}&asema=${station}&tila=${encodeURIComponent(state)}`, { cache: 'no-store' })).json();
+      const state = `${mode}${sp.state().ready ? '' : ' (not started)'}`;
+      const r = await (await fetch(`./dev/commands?after=${commandSeq}&station=${station}&mode=${encodeURIComponent(state)}`, { cache: 'no-store' })).json();
       commandSeq = r.seq;
       for (const line of r.commands) runCommand(line);
     } catch (err) {
-      // ei yhteyttä
+      // no connection
     }
   }
   setInterval(pollCommands, 1000);
 
   function runCommand(line) {
     const [cmd, ...rest] = line.trim().split(/\s+/);
-    sp.log(`komento: ${line}`);
-    if (cmd === 'tila' && rest[0]) {
+    sp.log(`command: ${line}`);
+    if (cmd === 'mode' && rest[0]) {
       mode = rest[0];
       if (rest[1]) beaconSeconds = Math.max(8, Number(rest[1]) || beaconSeconds);
       showBanner();
       scheduleBeacon();
-    } else if (cmd === 'laheta') {
+    } else if (cmd === 'send') {
       lastSentText = line.trim().slice(cmd.length + 1);
       sp.send(lastSentText);
-    } else if (cmd === 'peruuta') {
+    } else if (cmd === 'cancel') {
       sp.cancel();
-    } else if (cmd === 'pyyhkaisy') {
+    } else if (cmd === 'sweep') {
       playSweep(Number(rest[0]) || 0.3);
-    } else if (cmd === 'aanita') {
-      // Äänitä N sekuntia tästä eteenpäin ja lähetä (esim. Macin soittama pyyhkäisy).
+    } else if (cmd === 'record') {
+      // Record N seconds from now and upload (e.g. a sweep played by the Mac).
       const seconds = Math.min(40, Number(rest[0]) || 8);
-      const kind = rest[1] || 'muu';
+      const kind = rest[1] || 'other';
       const gain = rest[2] || '0.3';
-      setTimeout(() => uploadRecording(kind, { gain, huom: rest.slice(3).join(' ') }, seconds), seconds * 1000);
-    } else if (cmd === 'lataa') {
+      // An optional leading word "holdout" marks the recording as part of the holdout set.
+      const holdout = rest[3] === 'holdout';
+      const query = { gain, note: rest.slice(holdout ? 4 : 3).join(' ') };
+      if (holdout) query.holdout = '1';
+      setTimeout(() => uploadRecording(kind, query, seconds), seconds * 1000);
+    } else if (cmd === 'reload') {
       location.reload();
     }
   }
 
-  // ---------------------------------------------------------------- automaattinen käynnistys
-  // Testiaseman selain käynnistetään lipuilla, jotka sallivat äänen ja mikrofonin
-  // ilman napinpainallusta (ks. README). Jos ne puuttuvat, Aloita-nappi toimii.
+  // ---------------------------------------------------------------- automatic start
+  // The test station's browser is launched with flags that allow audio and the
+  // microphone without a click (see README). Without them the Start button works.
   window.addEventListener('load', () => setTimeout(() => sp.start(), 300));
 })();

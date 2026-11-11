@@ -1,13 +1,13 @@
-//! Akustisen kanavan mittaus pyyhkäisyllä.
+//! Measuring the acoustic channel with a sweep.
 //!
-//! Kaiuttimesta soitetaan eksponentiaalinen sinipyyhkäisy (taajuus kasvaa
-//! tasaisesti oktaaveissa). Äänitteestä ratkaistaan huoneen ja laitteiden
-//! yhteinen impulssivaste jakamalla äänitteen spektri pyyhkäisyn spektrillä
-//! (dekonvoluutio). Pyyhkäisyä ennen äänitetty hiljaisuus on huoneen taustamelu.
+//! An exponential sine sweep is played from the speaker (the frequency rises
+//! evenly in octaves). The combined impulse response of the room and the devices
+//! is solved from the recording by dividing its spectrum by the sweep's spectrum
+//! (deconvolution). The silence recorded before the sweep is the room's background noise.
 //!
-//! Impulssivasteesta ja melusta johdetaan luvut, joilla modulaatio valitaan:
-//! taajuusvaste, jälkikaiunta-aika, viivehaje ja kaistakohtainen
-//! signaali-kohinasuhde.
+//! The impulse response and the noise yield the figures used to choose the modulation:
+//! frequency response, reverberation time, delay spread and per-band
+//! signal-to-noise ratio.
 
 use crate::dsp::fft::{next_pow2, Fft};
 
@@ -41,14 +41,14 @@ impl Sweep {
             .collect()
     }
 
-    /// Aika, jonka verran k:nnen harmonisen särön "haamuvaste" edeltää varsinaista
-    /// impulssivastetta dekonvoluution jälkeen.
+    /// Time by which the "ghost response" of the k-th harmonic distortion precedes the actual
+    /// impulse response after deconvolution.
     pub fn harmonic_lead_s(&self, k: u32) -> f64 {
         self.duration_s * (k as f64).ln() / (self.f2 / self.f1).ln()
     }
 }
 
-/// Koko mittaussignaali: hiljaisuus (taustamelu), pyyhkäisy, hiljaisuus (kaiun häntä).
+/// The whole test signal: silence (background noise), sweep, silence (echo tail).
 pub fn test_signal(sweep: &Sweep, fs: f64) -> Vec<f32> {
     let mut out = vec![0.0; (1.0 * fs) as usize];
     out.extend(sweep.generate(fs));
@@ -56,9 +56,9 @@ pub fn test_signal(sweep: &Sweep, fs: f64) -> Vec<f32> {
     out
 }
 
-/// Dekonvoluutio taajuustasossa: h = IFFT( Y·conj(X) / (|X|² + ε) ).
-/// Säännöllistys ε estää kohinan räjähtämisen taajuuksilla, joilla pyyhkäisyssä
-/// ei ole tehoa.
+/// Deconvolution in the frequency domain: h = IFFT( Y·conj(X) / (|X|² + ε) ).
+/// The regularisation ε keeps noise from blowing up at frequencies where the sweep
+/// has no power.
 pub fn deconvolve(rec: &[f32], reference: &[f32]) -> Vec<f32> {
     let n = next_pow2(rec.len() + reference.len());
     let fft = Fft::new(n);
@@ -85,37 +85,37 @@ pub fn deconvolve(rec: &[f32], reference: &[f32]) -> Vec<f32> {
 #[derive(Clone, Debug)]
 pub struct Band {
     pub center_hz: f64,
-    /// Kanavan vahvistus (kaiutin + huone + mikrofoni), dB.
+    /// Channel gain (speaker + room + microphone), dB.
     pub gain_db: f64,
-    /// Taustamelun teho 50 Hz:n kaistalla, dBFS.
+    /// Background noise power in a 50 Hz band, dBFS.
     pub noise_db: f64,
-    /// Yhden sävelen SNR 50 Hz:n kaistalla, jos sävel soitetaan pyyhkäisyn amplitudilla.
+    /// SNR of a single tone in a 50 Hz band if the tone is played at the sweep's amplitude.
     pub tone_snr_db: f64,
 }
 
 #[derive(Clone, Debug)]
 pub struct ChannelMeasurement {
     pub fs: f64,
-    /// Pyyhkäisyn alun paikka äänitteessä (näytteinä).
+    /// Position of the start of the sweep in the recording (in samples).
     pub delay_samples: usize,
-    /// Impulssivaste, suora ääni kohdassa `ir_pre`.
+    /// Impulse response, direct sound at `ir_pre`.
     pub ir: Vec<f32>,
     pub ir_pre: usize,
-    /// Taustamelu ennen pyyhkäisyä.
+    /// Background noise before the sweep.
     pub noise: Vec<f32>,
     pub noise_rms: f32,
-    /// Äänitetyn pyyhkäisyn tehollisarvo.
+    /// RMS of the recorded sweep.
     pub signal_rms: f32,
     pub clipped: f32,
-    /// Jälkikaiunta-aika (T20:stä ekstrapoloitu), jos vaimeneminen oli mitattavissa.
+    /// Reverberation time (extrapolated from T20), if the decay was measurable.
     pub rt60_s: Option<f64>,
-    /// Suoran äänen (±2,5 ms) ja muun energian suhde.
+    /// Ratio of the direct sound (±2.5 ms) to the rest of the energy.
     pub drr_db: f64,
-    /// Tehollinen viivehaje (RMS delay spread).
+    /// RMS delay spread.
     pub delay_spread_s: f64,
-    /// Toisen harmonisen särön taso suhteessa perusvasteeseen.
+    /// Level of second harmonic distortion relative to the fundamental response.
     pub thd2_db: f64,
-    /// Kuinka monta desibeliä impulssivasteen huippu on dekonvoluution kohinapohjan yläpuolella.
+    /// How many decibels the impulse response peak is above the deconvolution noise floor.
     pub ir_dynamic_db: f64,
     pub bands: Vec<Band>,
 }
@@ -124,8 +124,8 @@ fn energy(x: &[f32]) -> f64 {
     x.iter().map(|&v| (v as f64) * (v as f64)).sum()
 }
 
-/// Tehospektrin tiheys Welchin menetelmällä (Hann-ikkuna, 50 % limitys).
-/// Palauttaa tehon per Hz taajuuksille k·fs/n, k = 0..n/2.
+/// Power spectral density with Welch's method (Hann window, 50 % overlap).
+/// Returns power per Hz for frequencies k·fs/n, k = 0..n/2.
 pub fn welch_psd(x: &[f32], fs: f64, n: usize) -> Vec<f64> {
     let fft = Fft::new(n);
     let win: Vec<f32> = (0..n).map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / n as f32).cos()).collect();
@@ -151,7 +151,7 @@ pub fn welch_psd(x: &[f32], fs: f64, n: usize) -> Vec<f64> {
     acc.iter().map(|&p| p * scale).collect()
 }
 
-/// Kolmannesoktaavikaistojen keskitaajuudet välillä 200 Hz – 20 kHz.
+/// Centre frequencies of the third-octave bands between 200 Hz and 20 kHz.
 pub fn third_octave_centers() -> Vec<f64> {
     (-7..=13).map(|i| 1000.0 * 2f64.powf(i as f64 / 3.0)).collect()
 }
@@ -159,25 +159,25 @@ pub fn third_octave_centers() -> Vec<f64> {
 pub fn analyze(rec: &[f32], fs: f64, sweep: &Sweep) -> Result<ChannelMeasurement, String> {
     let reference = sweep.generate(fs);
     if rec.len() < reference.len() {
-        return Err("äänite on lyhyempi kuin pyyhkäisy".into());
+        return Err("recording is shorter than the sweep".into());
     }
     let h = deconvolve(rec, &reference);
-    // Suora ääni on dekonvoluution suurin huippu; sen paikka on pyyhkäisyn alku äänitteessä.
+    // The direct sound is the largest peak of the deconvolution; its position is the start of the sweep in the recording.
     let search = rec.len().min(h.len());
     let (peak, peak_val) = h[..search].iter().enumerate().fold((0, 0.0f32), |b, (i, &v)| if v.abs() > b.1 { (i, v.abs()) } else { b });
     if peak_val <= 0.0 {
-        return Err("äänite on hiljainen".into());
+        return Err("recording is silent".into());
     }
     let ms = |t: f64| (t * 1e-3 * fs) as usize;
 
-    // Dekonvoluution kohinapohja alueelta, jossa ei ole vastetta eikä särön haamuja.
+    // Deconvolution noise floor from a region with no response and no distortion ghosts.
     let lead2 = (sweep.harmonic_lead_s(2) * fs) as usize;
     let floor_lo = peak.saturating_sub(lead2.saturating_sub(ms(60.0)).max(ms(100.0)));
     let floor_hi = peak.saturating_sub(ms(50.0));
     let floor_power = if floor_hi > floor_lo + ms(10.0) { energy(&h[floor_lo..floor_hi]) / (floor_hi - floor_lo) as f64 } else { 1e-20 };
 
-    // Impulssivaste: 2 ms ennen huippua, loppu siihen kohtaan, jossa 10 ms:n
-    // ikkunan teho painuu kohinapohjaan (enintään 1,2 s).
+    // Impulse response: 2 ms before the peak, ending where the power of a 10 ms
+    // window sinks to the noise floor (at most 1.2 s).
     let pre = ms(2.0).min(peak);
     let win = ms(10.0).max(1);
     let max_len = ((1.2 * fs) as usize).min(h.len() - peak);
@@ -192,7 +192,7 @@ pub fn analyze(rec: &[f32], fs: f64, sweep: &Sweep) -> Result<ChannelMeasurement
     }
     let ir: Vec<f32> = h[peak - pre..peak + len].to_vec();
 
-    // Suoran äänen osuus ja viivehaje.
+    // Share of the direct sound, and the delay spread.
     let direct_hi = (pre + ms(2.5)).min(ir.len());
     let e_direct = energy(&ir[..direct_hi]);
     let e_total = energy(&ir);
@@ -207,8 +207,8 @@ pub fn analyze(rec: &[f32], fs: f64, sweep: &Sweep) -> Result<ChannelMeasurement
     let mean = m1 / e_total;
     let delay_spread_s = (m2 / e_total - mean * mean).max(0.0).sqrt();
 
-    // RT60 Schroederin takaperin integroidusta energiakäyrästä: sovitetaan suora
-    // välille -5..-25 dB ja ekstrapoloidaan 60 dB:iin.
+    // RT60 from Schroeder's backward-integrated energy curve: fit a line
+    // over -5..-25 dB and extrapolate to 60 dB.
     let mut edc = vec![0.0f64; ir.len() + 1];
     for n in (0..ir.len()).rev() {
         edc[n] = edc[n + 1] + (ir[n] as f64) * (ir[n] as f64);
@@ -221,21 +221,21 @@ pub fn analyze(rec: &[f32], fs: f64, sweep: &Sweep) -> Result<ChannelMeasurement
         _ => None,
     };
 
-    // Toinen harmoninen: haamuvaste lead2 näytettä ennen huippua.
+    // Second harmonic: ghost response lead2 samples before the peak.
     let thd2_db = if peak > lead2 + ms(10.0) {
         let c = peak - lead2;
         let e2 = energy(&h[c - ms(5.0)..c + ms(15.0)]) - floor_power * ms(20.0) as f64;
         if e2 > 0.0 {
             10.0 * (e2 / energy(&h[peak - pre..peak + ms(15.0)])).log10()
         } else {
-            f64::NAN // särö jää kohinapohjan alle
+            f64::NAN // distortion stays below the noise floor
         }
     } else {
         f64::NAN
     };
 
-    // Taustamelu: äänitteen alku ennen pyyhkäisyä (0,15 s alusta ohitetaan, koska
-    // äänityksen käynnistyminen voi naksahtaa).
+    // Background noise: start of the recording before the sweep (the first 0.15 s is skipped because
+    // the start of recording can click).
     let noise_lo = ms(150.0).min(peak);
     let noise_hi = peak.saturating_sub(ms(50.0)).max(noise_lo);
     let noise: Vec<f32> = rec[noise_lo..noise_hi].to_vec();
@@ -245,7 +245,7 @@ pub fn analyze(rec: &[f32], fs: f64, sweep: &Sweep) -> Result<ChannelMeasurement
     let signal_rms = crate::dsp::rms(sig);
     let clipped = sig.iter().filter(|v| v.abs() >= 0.99).count() as f32 / sig.len().max(1) as f32;
 
-    // Kaistakohtaiset luvut.
+    // Per-band figures.
     let nfft = next_pow2(ir.len()).max(4096);
     let fft = Fft::new(nfft);
     let mut re = vec![0.0f32; nfft];
@@ -314,21 +314,21 @@ mod tests {
         cfg.rx_level = 0.05;
         let rec = run_oneway(&tx, &cfg, 9);
         let m = analyze(&rec, fs, &sweep).unwrap();
-        // Pyyhkäisy alkaa 0,25 s + 1,0 s kohdalla (+ konvoluution lohkoviive).
+        // The sweep starts at 0.25 s + 1.0 s (+ the convolution's block delay).
         let expect = (1.25 * fs) as i64 + crate::dsp::conv::Convolver::BLOCK as i64;
         assert!((m.delay_samples as i64 - expect).abs() < 30, "{} vs {expect}", m.delay_samples);
         let rt = m.rt60_s.unwrap();
         assert!((rt - 0.3).abs() < 0.08, "rt60 {rt}");
         assert!((m.drr_db - 6.0).abs() < 2.5, "drr {}", m.drr_db);
-        // Impulssivasteen muoto vastaa alkuperäistä (korrelaatio alun 50 ms:lta).
-        // Pyyhkäisy kattaa vain 100 Hz – 20 kHz, joten täyttä vastaavuutta ei tule.
+        // The shape of the impulse response matches the original (correlation over the first 50 ms).
+        // The sweep covers only 100 Hz – 20 kHz, so the match is not perfect.
         let n = 2400;
         let a = &m.ir[m.ir_pre..m.ir_pre + n];
         let b = &ir[..n];
         let dot: f64 = a.iter().zip(b).map(|(x, y)| (*x as f64) * (*y as f64)).sum();
         let corr = dot / (energy(a) * energy(b)).sqrt();
         assert!(corr > 0.85, "corr {corr}");
-        // Vaste on tasainen, joten kaistojen vahvistukset ovat lähellä toisiaan.
+        // The response is flat, so the band gains are close to each other.
         let g: Vec<f64> = m.bands.iter().filter(|b| b.center_hz > 400.0 && b.center_hz < 12000.0).map(|b| b.gain_db).collect();
         let spread = g.iter().cloned().fold(f64::MIN, f64::max) - g.iter().cloned().fold(f64::MAX, f64::min);
         assert!(spread < 8.0, "spread {spread}");

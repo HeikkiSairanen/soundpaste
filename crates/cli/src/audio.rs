@@ -1,7 +1,7 @@
-//! Äänen toisto ja äänitys Macilla järjestelmän komentorivityökaluilla (SoX: `play`, `rec`).
+//! Audio playback and recording on a Mac with command-line tools (SoX: `play`, `rec`).
 //!
-//! Ei äänikirjastoja: työkalut ajetaan aliprosesseina ja ääni kulkee
-//! WAV-tiedostoina väliaikaishakemiston kautta.
+//! No audio libraries: the tools run as subprocesses and audio passes
+//! through the temp directory as WAV files.
 
 use modem_core::wav;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ fn have(tool: &str) -> bool {
 pub fn check_tools() -> Result<(), String> {
     for t in ["rec", "play"] {
         if !have(t) {
-            return Err(format!("komentoa '{t}' ei löydy (SoX puuttuu)"));
+            return Err(format!("command '{t}' not found (SoX is missing)"));
         }
     }
     Ok(())
@@ -33,44 +33,44 @@ fn rec_command(path: &PathBuf, fs: u32, duration_s: f64) -> Command {
 }
 
 fn read_recording(path: &PathBuf) -> Result<Vec<f32>, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("äänitettä ei syntynyt: {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("no recording was produced: {e}"))?;
     let _ = std::fs::remove_file(path);
-    let w = wav::decode(&bytes).map_err(|e| format!("äänite: {e}"))?;
+    let w = wav::decode(&bytes).map_err(|e| format!("recording: {e}"))?;
     if w.samples.is_empty() {
-        return Err("äänite on tyhjä".into());
+        return Err("the recording is empty".into());
     }
     if w.samples.iter().all(|&v| v == 0.0) {
-        return Err("äänite on pelkkää nollaa: päätteeltä puuttuu todennäköisesti mikrofonilupa \
-                    (Järjestelmäasetukset → Tietosuoja ja suojaus → Mikrofoni)"
+        return Err("the recording is all zeros: the terminal probably lacks microphone permission \
+                    (System Settings → Privacy & Security → Microphone)"
             .into());
     }
     Ok(w.samples)
 }
 
-/// Äänitä mikrofonista. Ei soita mitään.
+/// Record from the microphone. Plays nothing.
 pub fn record(fs: u32, duration_s: f64) -> Result<Vec<f32>, String> {
     check_tools()?;
     let path = tmp("rec.wav");
     let out = rec_command(&path, fs, duration_s).output().map_err(|e| format!("rec: {e}"))?;
     if !out.status.success() {
-        return Err(format!("rec epäonnistui: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(format!("rec failed: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
     read_recording(&path)
 }
 
-/// Soita `tx` kaiuttimesta ja äänitä samalla mikrofonista.
-/// Äänitys alkaa `pre_s` ennen toistoa ja jatkuu `post_s` sen jälkeen.
+/// Play `tx` from the speaker while recording from the microphone.
+/// Recording starts `pre_s` before playback and continues `post_s` after it.
 pub fn play_and_record(tx: &[f32], fs: u32, pre_s: f64, post_s: f64) -> Result<Vec<f32>, String> {
     check_tools()?;
     let tx_path = tmp("tx.wav");
     let rec_path = tmp("rec.wav");
-    // Hiljaisuutta molempiin päihin: toistotyökalu voi katkaista äänen aivan lopusta
-    // (viimeinen puskuri jää soittamatta) ja äänilaitteen herääminen voi syödä alun.
+    // Silence at both ends: the playback tool may cut off the very end of the audio
+    // (the last buffer is never played) and the audio device waking up may eat the start.
     let pad = vec![0.0f32; (0.3 * fs as f64) as usize];
     let padded: Vec<f32> = pad.iter().chain(tx).chain(&pad).copied().collect();
     std::fs::write(&tx_path, wav::encode_pcm16(fs, &padded)).map_err(|e| e.to_string())?;
     let tx_dur = padded.len() as f64 / fs as f64;
-    // Varataan toiston käynnistymiselle reilusti aikaa; äänite leikataan analyysissä.
+    // Leave generous time for playback to start; the recording is trimmed during analysis.
     let total = pre_s + tx_dur + post_s + 1.0;
     let rec = rec_command(&rec_path, fs, total).spawn().map_err(|e| format!("rec: {e}"))?;
     std::thread::sleep(Duration::from_secs_f64(pre_s));
@@ -79,10 +79,10 @@ pub fn play_and_record(tx: &[f32], fs: u32, pre_s: f64, post_s: f64) -> Result<V
     let play = play.map_err(|e| format!("play: {e}"))?;
     let rec_out = rec.wait_with_output().map_err(|e| format!("rec: {e}"))?;
     if !play.status.success() {
-        return Err(format!("play epäonnistui: {}", String::from_utf8_lossy(&play.stderr).trim()));
+        return Err(format!("play failed: {}", String::from_utf8_lossy(&play.stderr).trim()));
     }
     if !rec_out.status.success() {
-        return Err(format!("rec epäonnistui: {}", String::from_utf8_lossy(&rec_out.stderr).trim()));
+        return Err(format!("rec failed: {}", String::from_utf8_lossy(&rec_out.stderr).trim()));
     }
     read_recording(&rec_path)
 }
@@ -92,7 +92,7 @@ fn osascript(script: &str) -> Option<String> {
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// Järjestelmän äänenvoimakkuus 0–100.
+/// System output volume, 0–100.
 pub fn system_volume() -> Option<u32> {
     osascript("output volume of (get volume settings)")?.parse().ok()
 }
@@ -101,8 +101,8 @@ pub fn set_system_volume(v: u32) -> bool {
     osascript(&format!("set volume output volume {}", v.min(100))).is_some()
 }
 
-/// Laitteen kuvaus metatietoihin: konemalli ja oletusäänilaitteet. Ei koneen
-/// nimeä, koska siinä on usein omistajan nimi.
+/// Device description for metadata: machine model and default audio devices. Not the
+/// computer name, because it often contains the owner's name.
 pub fn device_description() -> String {
     let model = Command::new("sysctl").args(["-n", "hw.model"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     let mut input = String::new();
@@ -121,5 +121,5 @@ pub fn device_description() -> String {
             }
         }
     }
-    format!("{model}; mikrofoni: {input}; kaiutin: {output}")
+    format!("{model}; microphone: {input}; speaker: {output}")
 }

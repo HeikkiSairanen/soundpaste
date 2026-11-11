@@ -1,191 +1,195 @@
 # soundpaste
 
-Siirrä lyhyt teksti (linkki, salasana, koodinpätkä) viereiselle koneelle
-äänellä. Toinen kone soittaa kaiuttimesta, toinen kuuntelee mikrofonilla ja
-kuittaa äänellä takaisin. Palvelinta ei ole: kaikki tapahtuu selaimessa.
+Send a short text (a link, a password, a code snippet) to the computer next to
+you by sound. One computer plays through its speaker, the other listens with
+its microphone and acknowledges by sound. There is no server: everything
+happens in the browser.
 
-- Sivu: https://sairanen.org/soundpaste tai https://heikkisairanen.github.io/soundpaste/ (julkaisu: ks. [Julkaisu](#julkaisu))
-- Suunnitelma ja perustelut: [DESIGN.md](DESIGN.md)
-- Kokeilupäiväkirja mittaustuloksineen: [EXPERIMENTS.md](EXPERIMENTS.md)
-- Alkuperäinen tehtävänanto: [TEHTAVA.md](TEHTAVA.md)
+- Page: https://sairanen.org/soundpaste or https://heikkisairanen.github.io/soundpaste/ (publishing: see [Publishing](#publishing))
+- Design and rationale: [DESIGN.md](DESIGN.md)
+- Experiment log with measurements: [EXPERIMENTS.md](EXPERIMENTS.md)
+- Original task specification: [TASK.md](TASK.md)
 
-60 merkin linkki siirtyy kuittauksineen noin 2,5 sekunnissa ja 512 tavun
-enimmäisviesti noin 16 sekunnissa. Siirto ei ole salattu.
+A 60-character link transfers, acknowledgement included, in about 2.5 seconds
+and the 512-byte maximum message in about 16 seconds. The transfer is not
+encrypted.
 
-## Rakenne
+## Layout
 
-| hakemisto | sisältö |
+| directory | contents |
 |---|---|
-| `crates/modem-core` | Ydin, ei riippuvuuksia: signaalinkäsittely (`dsp`), aaltomuodot (`phy`), Reed–Solomon (`rs`), linkkikerros (`link`), asema (`station`), kanavasimulaattori (`sim`), kanavamittaus (`measure`) |
-| `crates/cli` | `soundpaste`-komento: koodaus, mittausajot, oikean äänen kehät, kehityspalvelin. Ei riippuvuuksia |
-| `crates/wasm` | WebAssembly-kääre: C-rajapinta ilman wasm-bindgeniä |
-| `web/` | Julkaistava sivu: `index.html`, `style.css`, `app.js` (pääsäie), `worklet.js` (äänisäie) |
-| `dev/` | Testiaseman selainkoodi. Vain kehityspalvelin tarjoilee sen |
-| `bench/` | Mittausajojen tulokset (`results/`), perustaso (`baseline.json`), yksittäiset kokeet (`kokeet/`) |
-| `corpus/` | Oikeat äänitteet: kanavamittaukset (`kanava/`) ja modeemilähetykset (`lahetys/`). Ei versionhallinnassa: syntyy omilla mittauksilla |
+| `crates/modem-core` | The core, no dependencies: signal processing (`dsp`), waveforms (`phy`), Reed–Solomon (`rs`), link layer (`link`), station (`station`), channel simulator (`sim`), channel measurement (`measure`) |
+| `crates/cli` | The `soundpaste` command: encoding, bench runs, real-audio loops, dev server. No dependencies |
+| `crates/wasm` | WebAssembly wrapper: a C interface without wasm-bindgen |
+| `web/` | The published page: `index.html`, `style.css`, `app.js` (main thread), `worklet.js` (audio thread) |
+| `dev/` | Browser code for the test station. Only the dev server serves it |
+| `bench/` | Bench run results (`results/`), the baseline (`baseline.json`), one-off experiments (`experiments/`) |
+| `corpus/` | Real recordings: channel measurements (`channel/`) and modem transmissions (`tx/`). Not in version control: you create it with your own measurements |
 
-Sama tilakone (`Station`: modeemi + linkkikerros) pyörii selaimessa,
-komentorivillä ja simulaattorissa.
+The same state machine (`Station`: modem + link layer) runs in the browser, on
+the command line and in the simulator.
 
-## Kääntäminen
+## Building
 
-Tarvitaan Rust ja wasm-kohde (`rustup target add wasm32-unknown-unknown`).
-Ei npm:ää, ei bundleria, ei ulkoisia crateja.
+You need Rust and the wasm target (`rustup target add wasm32-unknown-unknown`).
+No npm, no bundler, no external crates.
 
 ```sh
-./rakenna.sh            # kääntää CLI:n ja wasm-moduulin, kokoaa sivun hakemistoon dist/
-./rakenna.sh --testit   # ajaa lisäksi testit
-cargo test -q           # pelkät testit
+./build.sh           # builds the CLI and the wasm module, assembles the page into dist/
+./build.sh --test    # also runs the tests
+cargo test -q        # tests only
 ```
 
-`dist/` on valmis staattinen sivu, joka toimii missä tahansa alihakemistossa
-(suhteelliset polut). Mikrofoni vaatii selaimessa https-yhteyden tai
-localhostin.
+`dist/` is a finished static page that works in any subdirectory (relative
+paths). In the browser the microphone requires https or localhost.
 
-## Kehityssykli
+## Development cycle
 
-Periaate: jokainen muutos mitataan yhdellä komennolla, ja suurin osa työstä
-tapahtuu hiljaa Macilla. Kehät nopeimmasta hitaimpaan:
+The principle: every change is measured with one command, and most of the work
+happens silently on the Mac. The loops, fastest to slowest:
 
-### A. Simulaatio (sekunteja, hiljainen)
+### A. Simulation (seconds, silent)
 
 ```sh
 cargo test -q
-./target/release/soundpaste bench            # koko sessio 15 kanavaprofiililla, noin 35 s
-./target/release/soundpaste bench --quick    # nopea tarkistus
-./target/release/soundpaste bench --oneway   # pelkkä fyysinen kerros
-./target/release/soundpaste compare          # uusin ajo vs. perustaso; paluuarvo 1, jos jokin heikkeni
-./target/release/soundpaste baseline         # uusin ajo perustasoksi (vain kun muutos jää voimaan)
-./target/release/soundpaste session --profile kaikuisa --snr 3 --len 300   # yksi sessio lokeineen
-./target/release/soundpaste sim --profile halli --snr 20 --seed 2          # yksi kehys
+./target/release/soundpaste bench            # full session over 15 channel profiles, about 35 s
+./target/release/soundpaste bench --quick    # quick check
+./target/release/soundpaste bench --oneway   # physical layer only
+./target/release/soundpaste compare          # latest run vs. baseline; exit code 1 if anything regressed
+./target/release/soundpaste baseline         # make the latest run the baseline (only when the change stays)
+./target/release/soundpaste session --profile reverberant --snr 3 --len 300   # one session with its log
+./target/release/soundpaste sim --profile hall --snr 20 --seed 2              # one frame
 ```
 
-Pistetaulussa on aina samat mittarit: 60 merkin linkin siirtoaika,
-onnistumisosuus, alin toimiva signaali-kohinasuhde, bittivirhesuhde ennen
-virheenkorjausta, korjattujen tavujen määrä ja nettonopeus. Tulokset
-tallentuvat hakemistoon `bench/results/` commit-tunnisteen kanssa.
+The scoreboard always has the same metrics: transfer time of a 60-character
+link, success rate, lowest working signal-to-noise ratio, bit error rate before
+error correction, number of corrected bytes and net data rate. Results are
+saved in `bench/results/` together with the commit id.
 
-### B. Äänitekorpus (sekunteja, hiljainen)
+### B. Recording corpus (seconds, silent)
 
 ```sh
-./target/release/soundpaste corpus             # listaa korpuksen ja purkaa äänitteet nykyisellä vastaanottimella
-./target/release/soundpaste corpus --holdout   # mukaan vertailuaineisto
+./target/release/soundpaste corpus             # lists the corpus and decodes the recordings with the current receiver
+./target/release/soundpaste corpus --holdout   # include the holdout set
 ```
 
-Mitatut kanavat (`corpus/kanava/`) ovat automaattisesti mittausajon
-profiileina (`m:...`), ja lähetysäänitteet (`corpus/lahetys/`) ajetaan
-jokaisen mittausajon yhteydessä. Osa aineistosta on merkitty
-vertailuaineistoksi (`"holdout": true`), jota ei käytetä virittämiseen.
+Measured channels (`corpus/channel/`) automatically become bench profiles
+(`m:...`), and the transmission recordings (`corpus/tx/`) are run with every
+bench run. Part of the material is marked as the holdout set
+(`"holdout": true`), which is not used for tuning.
 
-Korpus on huoneäänitteitä, joten sitä ei jaeta lähdekoodin mukana. Ilman sitä
-mittausajo toimii pelkillä synteettisillä profiileilla, ja `bench/`-hakemiston
-tulosten korpusrivit ja `m:`-profiilit jäävät pois. Oman korpuksen saa kohdan C
-komennoilla.
+The corpus consists of room recordings, so it is not distributed with the
+source. Without it the bench run works on the synthetic profiles alone, and the
+corpus rows and `m:` profiles in the results under `bench/` are absent. You get
+a corpus of your own with the commands in section C.
 
-### C. Akustinen kehä Macilla (kymmeniä sekunteja, kuuluu ääntä)
+### C. Acoustic loop on the Mac (tens of seconds, audible)
 
-Vaatii SoX:n (`rec`, `play`) ja päätteelle mikrofoniluvan.
+Requires SoX (`rec`, `play`) and microphone permission for the terminal.
 
 ```sh
-./target/release/soundpaste audio-test                      # mikrofonin taso, ei soita mitään
-./target/release/soundpaste measure --note "työhuone"        # kanavamittaus pyyhkäisyllä -> corpus/kanava
-./target/release/soundpaste acoustic --gains 1.0,0.3,0.1     # modeemilähetys usealla voimakkuudella -> corpus/lahetys
+./target/release/soundpaste audio-test                      # microphone level, plays nothing
+./target/release/soundpaste measure --note "study"           # channel measurement with a sweep -> corpus/channel
+./target/release/soundpaste acoustic --gains 1.0,0.3,0.1     # modem transmission at several levels -> corpus/tx
 ```
 
-Lisää `--sim huone`, niin sama komento ajetaan hiljaa simulaattorin läpi.
+Add `--sim room` and the same command runs silently through the simulator.
 
-### D. Selain samalla Macilla (minuutti)
+### D. Browser on the same Mac (a minute)
 
 ```sh
-./target/release/soundpaste serve &                          # kehityspalvelin, http://localhost:8787/
-# avaa selaimessa http://localhost:8787/?asema=mac-selain ja salli mikrofoni
-./target/release/soundpaste live --send "teksti"             # CLI lähettää, selain vastaanottaa
-./target/release/soundpaste remote laheta "teksti"           # selain lähettää...
-./target/release/soundpaste live --once --expect "teksti"    # ...ja CLI vastaanottaa
+./target/release/soundpaste serve &                          # dev server, http://localhost:8787/
+# open http://localhost:8787/?station=mac-browser in the browser and allow the microphone
+./target/release/soundpaste live --send "text"               # the CLI sends, the browser receives
+./target/release/soundpaste remote send "text"               # the browser sends...
+./target/release/soundpaste live --once --expect "text"      # ...and the CLI receives
 ```
 
-`live` on sama asema kuin selaimessa, mutta ääni kulkee SoX:n kautta.
+`live` is the same station as in the browser, but the audio goes through SoX.
 
-### E. Kaksi konetta (minuutteja)
+### E. Two computers (minutes)
 
-PC on passiivinen testiasema: käyttöönoton jälkeen siihen ei tarvitse koskea.
+The PC is a passive test station: once set up it needs no touching.
 
-**Kertaluonteinen käyttöönotto PC:llä (Windows, Chrome tai Edge):**
+**One-time setup on the PC (Windows, Chrome or Edge):**
 
-1. Käynnistä Macilla `./target/release/soundpaste serve`. Se tulostaa
-   lähiverkon osoitteen muodossa `http://<macin-nimi>.local:8787/`. Salli
-   yhteydet, jos macOS:n palomuuri kysyy.
-2. Tee PC:n työpöydälle pikakuvake, jonka kohde on (yhdellä rivillä, vaihda
-   Macin osoite):
+1. On the Mac, start `./target/release/soundpaste serve`. It prints the local
+   network address in the form `http://<mac-name>.local:8787/`. Allow
+   connections if the macOS firewall asks.
+2. Create a shortcut on the PC desktop whose target is (on one line, with the
+   Mac's address filled in):
 
    ```text
    "C:\Program Files\Google\Chrome\Application\chrome.exe"
-     --user-data-dir=C:\soundpaste-testi
-     --unsafely-treat-insecure-origin-as-secure=http://<macin-nimi>.local:8787
+     --user-data-dir=C:\soundpaste-test
+     --unsafely-treat-insecure-origin-as-secure=http://<mac-name>.local:8787
      --autoplay-policy=no-user-gesture-required
      --use-fake-ui-for-media-stream
-     "http://<macin-nimi>.local:8787/?testi=vastaanotto&asema=pc"
+     "http://<mac-name>.local:8787/?test=receive&station=pc"
    ```
 
-   Liput: erillinen selainprofiili (ei vaikuta muuhun selaamiseen), Macin
-   http-osoite kohdellaan turvallisena (mikrofoni vaatii sen), ääni sallitaan
-   ilman napinpainallusta ja mikrofonilupa hyväksytään automaattisesti.
-   Edgellä polku on `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
-   Jos `.local`-nimi ei toimi, käytä Macin IP-osoitetta ja tee reitittimeen
-   kiinteä osoitevaraus.
-3. Windowsin ääniasetuksista mikrofonin tehosteet pois (kohinanvaimennus,
-   "Voice Clarity", valmistajan tehosteet), ei lepotilaa eikä näytön
-   lukitusta, selainikkuna näkyvissä, koneet 0,5–1 m päässä toisistaan.
+   The flags: a separate browser profile (does not affect other browsing), the
+   Mac's http address is treated as secure (the microphone requires that),
+   audio is allowed without a click and the microphone permission is accepted
+   automatically. For Edge the path is
+   `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`.
+   If the `.local` name does not work, use the Mac's IP address and reserve a
+   fixed address for it in the router.
+3. In the Windows sound settings turn microphone effects off (noise
+   suppression, "Voice Clarity", vendor effects); no sleep and no screen lock;
+   keep the browser window visible and the computers 0.5–1 m apart.
 
-**Käyttö Macilta:**
-
-```sh
-./target/release/soundpaste remote tila                      # onko asema hengissä
-./target/release/soundpaste remote tila kaiku                # testitila: vastaanotto | kaiku | majakka [väli s]
-./target/release/soundpaste live --send "teksti"             # Mac lähettää, PC vastaanottaa (kaikutilassa lähettää takaisin)
-./target/release/soundpaste remote laheta "teksti"           # PC lähettää
-./target/release/soundpaste remote keraa 5                   # seuraavat 5 PC:n sessioäänitettä korpukseen
-./target/release/soundpaste measure --kaukaa pc              # kanava PC:n kaiuttimesta Macin mikrofoniin
-./target/release/soundpaste measure --kauas pc               # kanava Macin kaiuttimesta PC:n mikrofoniin
-```
-
-Testiasema tarkistaa kahden sekunnin välein, onko uusi versio: uusi
-wasm-moduuli vaihdetaan lennossa (mikrofoni pysyy päällä) ja muuttunut sivu
-ladataan uudelleen. Lokit tulostuvat palvelimen päätteeseen ja tallentuvat
-hakemistoon `devdata/`, samoin jokaisen session mikrofoniäänite.
-
-Mikään tästä ei päädy julkaistavaan sivuun: `rakenna.sh` kokoaa `dist/`:n
-vain `web/`-hakemistosta ja keskeyttää, jos tiedostoista löytyy verkko-osoite
-tai kehitystyökalujen jälki. Sivun CSP sallii yhteydet vain omaan hakemistoon.
-
-### Parannussykli
-
-1. Kirjaa hypoteesi `EXPERIMENTS.md`:hen: mitä muutetaan ja minkä mittarin odotetaan paranevan.
-2. Tee muutos, aja kehät A ja B (`cargo test`, `bench`, `compare`).
-3. Jos tulos on lupaava, aja kehä C ja myöhemmin D ja E.
-4. Kirjaa tulos ja johtopäätös, myös epäonnistuneet kokeilut.
-5. Jos muutos jää voimaan: `baseline` ja commit.
-
-Uusi aaltomuoto on uusi rivi taulukossa `MFSK_PRESETS`
-(`crates/modem-core/src/phy/mod.rs`), ja sitä voi mitata valinnalla `--phy <nimi>`.
-
-## Julkaisu
+**Use from the Mac:**
 
 ```sh
-./julkaise-github.sh   # kääntää sivun ja lähettää dist/-hakemiston GitHub Pagesiin (haara gh-pages)
+./target/release/soundpaste remote mode                      # is the station alive
+./target/release/soundpaste remote mode echo                 # test mode: receive | echo | beacon [interval s]
+./target/release/soundpaste live --send "text"               # the Mac sends, the PC receives (in echo mode it sends it back)
+./target/release/soundpaste remote send "text"               # the PC sends
+./target/release/soundpaste remote collect 5                 # the next 5 session recordings from the PC go into the corpus
+./target/release/soundpaste measure --from-remote pc         # channel from the PC's speaker to the Mac's microphone
+./target/release/soundpaste measure --to-remote pc           # channel from the Mac's speaker to the PC's microphone
 ```
 
-`dist/` on tavallinen staattinen hakemisto, joten sen voi kopioida mille tahansa
-HTTPS-palvelimelle. Palvelimen pitää tarjoilla `.wasm` MIME-tyypillä `application/wasm`.
+The test station checks every two seconds for a new version: a new wasm module
+is swapped in live (the microphone stays on) and a changed page is reloaded.
+Logs are printed in the server's terminal and saved under `devdata/`, as is
+the microphone recording of every session.
 
-## Tunnetut rajoitukset
+None of this ends up in the published page: `build.sh` assembles `dist/` from
+the `web/` directory only and aborts if the files contain a network address or
+a trace of the dev tooling. The page's CSP allows connections to its own
+directory only.
 
-- Vain kaksi laitetta kerrallaan: useampi vastaanottaja kuittaa päällekkäin.
-- Ei salausta eikä todennusta.
-- Hyvin kaikuisa tila (jälkikaiunta yli noin sekunnin ja koneet kaukana
-  toisistaan) ei toimi; kestävämpi tila on suunniteltu mutta ei toteutettu.
-- Tarkemmin: DESIGN.md luku 8 ja CLAUDE.md.
+### Improvement cycle
 
-## Lisenssi
+1. Write the hypothesis in `EXPERIMENTS.md`: what changes and which metric is expected to improve.
+2. Make the change, run loops A and B (`cargo test`, `bench`, `compare`).
+3. If the result looks promising, run loop C and later D and E.
+4. Record the result and the conclusion, failed experiments included.
+5. If the change stays: `baseline` and commit.
 
-MIT, katso `LICENSE`.
+A new waveform is a new row in the `MFSK_PRESETS` table
+(`crates/modem-core/src/phy/mod.rs`), and it can be measured with `--phy <name>`.
+
+## Publishing
+
+```sh
+./publish-github.sh   # builds the page and pushes dist/ to GitHub Pages (branch gh-pages)
+```
+
+`dist/` is an ordinary static directory, so it can be copied to any HTTPS
+server. The server must serve `.wasm` with the MIME type `application/wasm`.
+
+## Known limitations
+
+- Only two devices at a time: several receivers would acknowledge on top of each other.
+- No encryption and no authentication.
+- A very reverberant space (reverberation time over about a second with the
+  computers far apart) does not work; a more robust mode is designed but not
+  implemented.
+- More detail: DESIGN.md chapter 8 and CLAUDE.md.
+
+## License
+
+MIT, see `LICENSE`.

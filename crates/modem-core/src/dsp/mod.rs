@@ -1,11 +1,11 @@
-//! Signaalinkäsittelyn perusosat: FFT, liukuva taajuusilmaisin, apufunktiot.
+//! Signal processing basics: FFT, sliding frequency detector, helper functions.
 
 pub mod conv;
 pub mod fft;
 pub mod resample;
 pub mod sliding;
 
-/// Tehollisarvo (RMS).
+/// Root mean square (RMS).
 pub fn rms(x: &[f32]) -> f32 {
     if x.is_empty() {
         return 0.0;
@@ -14,18 +14,18 @@ pub fn rms(x: &[f32]) -> f32 {
     (s / x.len() as f64).sqrt() as f32
 }
 
-/// Tehosuhde desibeleinä.
+/// Power ratio in decibels.
 pub fn db10(ratio: f64) -> f64 {
     10.0 * ratio.max(1e-30).log10()
 }
 
-/// Amplitudisuhde desibeleistä.
+/// Amplitude ratio from decibels.
 pub fn from_db20(db: f64) -> f64 {
     10f64.powf(db / 20.0)
 }
 
-/// Goertzel-algoritmi: yhden taajuuden teho lohkossa, |X(f)|² / N².
-/// Halvempi kuin FFT, kun kiinnostavia taajuuksia on vain muutama.
+/// Goertzel algorithm: power of one frequency in a block, |X(f)|² / N².
+/// Cheaper than an FFT when only a few frequencies are of interest.
 pub fn goertzel_power(x: &[f32], freq: f64, fs: f64) -> f64 {
     let w = std::f64::consts::TAU * freq / fs;
     let c = 2.0 * w.cos();
@@ -50,7 +50,7 @@ mod tests {
         let x: Vec<f32> = (0..480).map(|i| (std::f64::consts::TAU * 2000.0 * i as f64 / fs).sin() as f32).collect();
         let on = goertzel_power(&x, 2000.0, fs);
         let off = goertzel_power(&x, 3000.0, fs);
-        // Siniaallon amplitudi 1 -> |X|²/N² = 1/4.
+        // Sine wave amplitude 1 -> |X|²/N² = 1/4.
         assert!((on - 0.25).abs() < 0.01, "{on}");
         assert!(off < 1e-6, "{off}");
     }

@@ -3,6 +3,6 @@ name = "modem-core"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "soundpaste-äänimodeemin ydin: fyysinen kerros, linkkikerros ja kanavasimulaattori. Ei riippuvuuksia."
+description = "Core of the soundpaste audio modem: physical layer, link layer and channel simulator. No dependencies."
 
 [dependencies]

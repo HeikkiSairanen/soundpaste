@@ -1,16 +1,16 @@
-//! Simuloitu akustinen kanava.
+//! Simulated acoustic channel.
 //!
-//! Malli yhdestä suunnasta (kaiutin -> ilma -> mikrofoni):
+//! Model of one direction (speaker -> air -> microphone):
 //!
 //! ```text
-//! lähetin (fs_tx) -> näytteenottotaajuuden muunnos (fs_rx, kellovirhe)
-//!                 -> huoneen impulssivaste (kaiku) -> viive -> vahvistus
-//! mikrofoni = Σ polut + taustakohina + häiriöt -> leikkautuminen
+//! transmitter (fs_tx) -> sample rate conversion (fs_rx, clock error)
+//!                 -> room impulse response (echo) -> delay -> gain
+//! microphone = Σ paths + background noise + interference -> clipping
 //! ```
 //!
-//! Kaikki osat ovat virtaavia, jotta kaksi modeemia voi keskustella
-//! simulaattorin läpi lohko kerrallaan. Satunnaisuus tulee annetusta
-//! siemenestä, joten ajot ovat toistettavia.
+//! All parts are streaming so that two modems can talk through the
+//! simulator block by block. Randomness comes from the given
+//! seed, so runs are repeatable.
 
 pub mod channel;
 pub mod duplex;

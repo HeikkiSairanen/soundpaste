@@ -1,293 +1,324 @@
-# Kokeilupäiväkirja
+# Experiment log
 
-Jokaisesta kokeilusta kirjataan hypoteesi, muutos, mittaustulos ja johtopäätös,
-myös silloin kun kokeilu epäonnistui. Uusin alimpana.
+For every experiment the hypothesis, the change, the measurement result and the
+conclusion are recorded, also when the experiment failed. Newest at the bottom.
 
-Mittarit tulevat komennosta `soundpaste bench` (ks. CLAUDE.md). SNR on
-signaalin ja kohinan tehosuhde mikrofonissa koko kaistalla 0..fs/2. "Alin SNR"
-on pienin 3 dB:n ruudukon piste, jolla ja jonka yläpuolella vähintään 90 %
-siirroista onnistuu.
+The metrics come from the command `soundpaste bench` (see CLAUDE.md). SNR is the
+power ratio of signal to noise at the microphone over the whole band 0..fs/2.
+"Min SNR" is the lowest point of the 3 dB grid at and above which at least 90 %
+of transfers succeed.
 
-## 0. Perustaso: v0-bfsk (2026-11-11)
+The recording corpus (`corpus/`) referred to below is local-only: it consists of
+room recordings and is not in the repository.
 
-**Tarkoitus.** Saada kehä A pyörimään yksinkertaisimmalla mahdollisella
-modeemilla. Ei tavoitella hyvää modeemia.
+## 0. Baseline: v0-bfsk (2026-11-11)
 
-**Toteutus.** 2-FSK (2000/3000 Hz), 100 baudia, vuorotteleva alkumerkki ja
-16-bittinen tahdistussana, CRC-16, ei virheenkorjausta. Yksisuuntainen, yksi
-kehys.
+**Purpose.** Get loop A running with the simplest possible modem. A good modem
+is not the goal.
 
-**Tulos** (`bench/results/20261111T075213Z-ei-commitia-v0-bfsk.json`, 12 toistoa/piste):
+**Implementation.** 2-FSK (2000/3000 Hz), 100 baud, an alternating preamble and
+a 16-bit sync word, CRC-16, no error correction. One-way, one frame.
 
-| mittari | arvo |
+**Result** (`bench/results/20261111T075213Z-no-commit-v0-bfsk.json`, 12 repetitions/point):
+
+| metric | value |
 |---|---|
-| siirtoaika, 60 merkin linkki (yksi kehys, ei kuittauksia) | 5,54 s |
-| onnistuminen nimellisoloissa (SNR >= 12 dB) | 84,5 % |
-| alin SNR, puhdas kanava | -9 dB |
-| alin SNR, huone (RT60 0,35 s) | +21 dB |
-| alin SNR, kaikuisa (RT60 0,8 s) | ei yllä 90 %:iin millään tasolla |
-| BER ennen korjausta, nimellisolot | 7,5e-3 |
-| nettonopeus | 10,8 tavua/s |
+| transfer time, 60-character link (one frame, no acks) | 5.54 s |
+| success in nominal conditions (SNR >= 12 dB) | 84.5 % |
+| min SNR, clean channel | -9 dB |
+| min SNR, room (RT60 0.35 s) | +21 dB |
+| min SNR, reverberant (RT60 0.8 s) | does not reach 90 % at any level |
+| BER before correction, nominal conditions | 7.5e-3 |
+| net rate | 10.8 bytes/s |
 
-**Johtopäätös.**
-- Kohina ei ole v0:n ongelma: puhtaalla kanavalla se toimii -9 dB:iin asti,
-  koska 10 ms:n symboli kerää tehoa kapealta kaistalta.
-- Kaiku on ongelma. Huoneessa onnistuminen jää noin 90 %:iin signaalin
-  voimakkuudesta riippumatta (virheet eivät vähene, kun SNR kasvaa), ja
-  kaikuisassa huoneessa mikään ei mene läpi. Edellisen symbolin kaiku osuu
-  samalle taajuudelle kuin nykyinen symboli, eikä kahdella taajuudella ole
-  mihin väistää.
-- Yksikin bittivirhe 504 bitin kehyksessä kaataa koko kehyksen, koska
-  virheenkorjausta ei ole.
-- Seuraavat kokeilut (vaihe 4): useampi taajuus ja taajuuden vaihto symbolien
-  välillä kaikua vastaan, Reed-Solomon, parempi tahdistus.
+**Conclusion.**
+- Noise is not v0's problem: on a clean channel it works down to -9 dB,
+  because the 10 ms symbol collects power from a narrow band.
+- Echo is the problem. In the room, success stays at about 90 % regardless of
+  the signal level (the errors do not decrease as SNR grows), and in the
+  reverberant room nothing gets through. The echo of the previous symbol lands
+  on the same frequency as the current symbol, and with two frequencies there
+  is nowhere to dodge.
+- A single bit error in the 504-bit frame brings down the whole frame, because
+  there is no error correction.
+- Next experiments (stage 4): more frequencies and changing frequency between
+  symbols against echo, Reed-Solomon, better synchronisation.
 
-## 1. Oikea ääni Macilla: kanavamittaus ja v0 kaiuttimesta mikrofoniin (2026-11-11)
+## 1. Real audio on the Mac: channel measurement and v0 from speaker to microphone (2026-11-11)
 
-**Tarkoitus.** Saada kehät B ja C pyörimään ja mitata kanava ennen
-suunnittelupäätöksiä. Laite: MacBook Pro (MacBookPro17,1), omat kaiuttimet ja
-oma mikrofoni, järjestelmän äänenvoimakkuus 44 %, työhuone.
+**Purpose.** Get loops B and C running and measure the channel before the
+design decisions. Device: MacBook Pro (MacBookPro17,1), its own speakers and
+its own microphone, system volume 44 %, home office.
 
-**Kanavamittaus** (`soundpaste measure`, pyyhkäisy 100 Hz – 20 kHz, kolme
-amplitudia 1,0 / 0,3 / 0,1; hiljaisin on vertailuaineistoa):
+**Channel measurement** (`soundpaste measure`, sweep 100 Hz – 20 kHz, three
+amplitudes 1.0 / 0.3 / 0.1; the quietest one is holdout material):
 
-| suure | arvo | merkitys |
+| quantity | value | significance |
 |---|---|---|
-| vahvistus 1–8 kHz | -25…-33 dB, tasainen ±4 dB | käyttökelpoinen kaista |
-| vahvistus 10–20 kHz | -37…-42 dB | noin 12 dB heikompi, mutta toimii 20 kHz:iin asti |
-| taustamelu / 50 Hz | -78 dBFS @ 200 Hz, -98 @ 1 kHz, -105 @ 2–8 kHz | melu on matalilla taajuuksilla |
-| suora ääni / kaiku | 11–12 dB | oma mikrofoni on aivan kaiuttimen vieressä |
-| viivehaje | 3–4 ms, koherenssikaista noin 50–70 Hz | kanava on taajuusvalikoiva jo omassa koneessa |
-| energia > 10 / 20 / 40 ms suoran äänen jälkeen | -14 / -20 / -27 dB | symbolien välinen häiriö |
-| oma kaiku kohinapohjassa (-55 dB) | 62 ms | suoja-ajan mitoitus |
-| toinen harmoninen särö | -40 dB (amplitudi 1,0), yhdessä mittauksessa -24 dB | rajoittaa tiheitä konstellaatioita |
+| gain 1–8 kHz | -25…-33 dB, flat ±4 dB | usable band |
+| gain 10–20 kHz | -37…-42 dB | about 12 dB weaker, but works up to 20 kHz |
+| background noise / 50 Hz | -78 dBFS @ 200 Hz, -98 @ 1 kHz, -105 @ 2–8 kHz | the noise is at low frequencies |
+| direct sound / echo | 11–12 dB | the own microphone is right next to the speaker |
+| delay spread | 3–4 ms, coherence bandwidth about 50–70 Hz | the channel is frequency-selective even within one machine |
+| energy > 10 / 20 / 40 ms after the direct sound | -14 / -20 / -27 dB | intersymbol interference |
+| own echo at the noise floor (-55 dB) | 62 ms | dimensioning of the guard time |
+| second harmonic distortion | -40 dB (amplitude 1.0), in one measurement -24 dB | limits dense constellations |
 
-RT60-arvio (0,05–0,17 s) ei ole luotettava: kaiun häntä hukkuu taustameluun
-ennen kuin se on vaimennut 25 dB, koska suora ääni on niin hallitseva.
-Mittaus kuvaa oman kaiun polkua, ei toisen koneen kuulemaa kanavaa. Toista
-konetta arvioidaan johdetulla profiililla `:kaukana` (suora ääni -14 dB).
+The RT60 estimate (0.05–0.17 s) is not reliable: the echo tail drowns in the
+background noise before it has decayed 25 dB, because the direct sound is so
+dominant. The measurement describes the path of the own echo, not the channel
+heard by another machine. The other machine is estimated with the derived
+profile `:far` (direct sound -14 dB).
 
-**v0 oikealla äänellä** (`soundpaste acoustic`, viisi voimakkuutta):
+**v0 over real audio** (`soundpaste acoustic`, five levels):
 
-| amplitudi | 1,0 | 0,3 | 0,1 | 0,03 | 0,01 |
+| amplitude | 1.0 | 0.3 | 0.1 | 0.03 | 0.01 |
 |---|---|---|---|---|---|
-| tulos | ok | ok | ok | ok | ei havaittu |
+| result | ok | ok | ok | ok | not detected |
 
-**Havainnot.**
-- Ensimmäisellä yrityksellä kolme neljästä epäonnistui, ja virhe oli joka
-  kerta kehyksen viimeisessä bitissä: SoX:n `play` katkaisee äänen lopusta.
-  Korjaus on mittaustyökalussa (hiljaisuutta toiston molempiin päihin), mutta
-  opetus koskee myös modeemia: kehyksen viimeinen symboli ei saa olla
-  viimeinen asia, jonka kaiutin soittaa.
-- Signaalin taso mikrofonissa on matala (-33 dBFS täydellä amplitudilla),
-  eli leikkautuminen ei ole tällä laitteella ongelma, mutta tasosta
-  riippumaton ilmaisu on välttämätön.
-- Mitatulla kanavalla ja mitatulla melulla v0 toimii vielä -15 dB:n
-  SNR:llä, koska melu on kaistan ulkopuolella. Koko kaistan SNR on siis
-  huono mittari oikealle huoneelle, ja kaistan valinta ratkaisee paljon.
-- Johdetulla `:kaukana`-profiililla v0 jää 50–60 %:iin tasosta
-  riippumatta: kaiku kaataa sen, kuten synteettisissäkin huoneissa.
+**Observations.**
+- On the first attempt three out of four failed, and the error was every time
+  in the last bit of the frame: SoX's `play` cuts the sound off at the end.
+  The fix is in the measurement tool (silence at both ends of the playback),
+  but the lesson also concerns the modem: the last symbol of a frame must not
+  be the last thing the speaker plays.
+- The signal level at the microphone is low (-33 dBFS at full amplitude), so
+  clipping is not a problem on this device, but level-independent detection is
+  essential.
+- With the measured channel and the measured noise, v0 still works at an SNR
+  of -15 dB, because the noise is outside the band. Whole-band SNR is thus a
+  poor metric for a real room, and the choice of band matters a lot.
+- With the derived `:far` profile v0 stays at 50–60 % regardless of level: the
+  echo brings it down, as in the synthetic rooms.
 
-**Perustaso** päivitetty: `bench/results/20261111T081049Z-b1d2c55-muutoksia-v0-bfsk.json`
-(mukana mitatut kanavat, korpus 4/5).
+**Baseline** updated: `bench/results/20261111T081049Z-b1d2c55-dirty-v0-bfsk.json`
+(measured channels included, corpus 4/5).
 
-## 2. v1: moniääni-MFSK, sävelhyppy, pyyhkäisyalkumerkki, Reed–Solomon (2026-11-11)
+## 2. v1: multitone MFSK, tone hopping, chirp preamble, Reed–Solomon (2026-11-11)
 
-**Hypoteesi.** DESIGN.md:n aaltomuoto (16 × 4-FSK, hyppy 4 ryhmää, 40 + 10 ms,
-pyyhkäisy + suhteellinen kynnys, RS pariteetilla 1/2) lyhentää 60 merkin
-kehyksen noin 1,5 sekuntiin ja toimii kaikuisassa huoneessa, jossa v0 ei
-toimi lainkaan.
+**Hypothesis.** The waveform of DESIGN.md (16 × 4-FSK, hopping over 4 groups,
+40 + 10 ms, chirp + relative threshold, RS with parity 1/2) shortens the
+60-character frame to about 1.5 seconds and works in the reverberant room,
+where v0 does not work at all.
 
-**Tulos** (`bench/results/20261111T083553Z-d9cbeba-muutoksia-v1.json`):
+**Result** (`bench/results/20261111T083553Z-d9cbeba-dirty-v1.json`):
 
-| mittari | v0 | v1 |
+| metric | v0 | v1 |
 |---|---|---|
-| siirtoaika, 60 merkin kehys | 5,54 s | 1,44 s |
-| onnistuminen nimellisoloissa | 86,3 % | 94,7 % (100 % ilman uutta halli-profiilia) |
-| alin SNR, huone | +21 dB | -6 dB |
-| alin SNR, kaikuisa (RT60 0,8 s) | ei yllä | -3 dB |
-| nettonopeus | 10,8 tavua/s | 41,7 tavua/s |
-| korjatut tavut / kehys nimellisoloissa | – | 0,7 (kapasiteetti 16) |
-| oikea ääni Macilla, amplitudit 1,0…0,01 | 4/5 | 5/5 |
+| transfer time, 60-character frame | 5.54 s | 1.44 s |
+| success in nominal conditions | 86.3 % | 94.7 % (100 % without the new hall profile) |
+| min SNR, room | +21 dB | -6 dB |
+| min SNR, reverberant (RT60 0.8 s) | does not reach | -3 dB |
+| net rate | 10.8 bytes/s | 41.7 bytes/s |
+| corrected bytes / frame in nominal conditions | – | 0.7 (capacity 16) |
+| real audio on the Mac, amplitudes 1.0…0.01 | 4/5 | 5/5 |
 
-Hypoteesi piti. Marginaalia on nimellisoloissa paljon: virheenkorjauksesta
-käytetään alle 5 %.
+The hypothesis held. There is a lot of margin in nominal conditions: less than
+5 % of the error correction is used.
 
-**Vika matkan varrella: alkumerkki laukesi sivukeilasta.** Ensimmäinen
-versio epäonnistui mitatuilla kanavilla juuri silloin, kun kohinaa oli
-vähiten (SNR 24–30 dB: 42–83 %). Syy: kun tausta on lähes äänetön,
-suhteellinen kynnys ylittyy jo pyyhkäisyn autokorrelaation sivukeilasta
-kymmeniä millisekunteja ennen päähuippua, ja huipun haku katsoi vain 15 ms
-eteenpäin. Korjaus: kynnyksen ylityksestä haetaan voimakkain huippu yhden
-alkumerkin mitan päähän asti. Tämän jälkeen mitatut kanavat 100 % kaikilla tasoilla.
-Opetus: "liian hyvä" signaali on oma testitapauksensa.
+**A bug along the way: the preamble triggered on a sidelobe.** The first
+version failed on the measured channels exactly when there was the least noise
+(SNR 24–30 dB: 42–83 %). The cause: when the background is nearly silent, the
+relative threshold is already exceeded by a sidelobe of the chirp's
+autocorrelation tens of milliseconds before the main peak, and the peak search
+looked only 15 ms ahead. The fix: from the threshold crossing, the strongest
+peak is searched up to one preamble length ahead. After this the measured
+channels are at 100 % at all levels.
+The lesson: a "too good" signal is a test case of its own.
 
-**Uudet profiilit**, koska vanhat eivät enää erotelleet versioita: `kolahdus`
-(kolme iskua kehyksen aikana), `puhe` (0,5 s puheen kaltaista häiriötä) ja
-`halli` (RT60 1,2 s, kaiku 5 dB suoraa ääntä voimakkaampi).
+**New profiles**, because the old ones no longer distinguished the versions:
+`thump` (three impacts during the frame), `speech` (0.5 s of speech-like
+interference) and `hall` (RT60 1.2 s, echo 5 dB stronger than the direct
+sound).
 
-**Muunnelmat** (sama mittaristo, alin SNR / onnistuminen):
+**Variants** (same instrumentation, min SNR / success):
 
-| muunnelma | kaikuisa | halli (SNR >= 12 dB) | muuta | päätös |
+| variant | reverberant | hall (SNR >= 12 dB) | other | decision |
 |---|---|---|---|---|
-| v1 (perus, pyyhkiytymät päällä) | -3 dB | 8–33 % | | **valittu** |
-| `v1-noera`: ei pyyhkiytymiä | 0 dB | | muuten sama | hylätty: pyyhkiytymät ovat ilmainen 3 dB reunalla |
-| `v1-8x20`: 8 alikanavaa, 20 + 5 ms | -3 dB | 0–8 % | sama nopeus | hylätty: pitkä symboli kestää pitkän kaiun paremmin |
-| `v1-g2`: hyppy 2 ryhmää | +27 dB | 0 % | puolet kaistasta | hylätty: vahvistaa vertailukokeen tuloksen |
-| `v1-time`: tavu = peräkkäiset symbolit | 0 dB | | kolahdus sama | hylätty: ei hyötyä, kaikuisassa hieman huonompi |
-| `v1-p3`: pariteetti 1/3 | 0 dB | 0–25 % | 1,29 s; puhe -3 dB | hylätty toistaiseksi: 10 % nopeampi mutta 3 dB herkempi |
+| v1 (base, erasures on) | -3 dB | 8–33 % | | **chosen** |
+| `v1-noera`: no erasures | 0 dB | | otherwise the same | rejected: erasures are a free 3 dB at the edge |
+| `v1-8x20`: 8 subchannels, 20 + 5 ms | -3 dB | 0–8 % | same rate | rejected: a long symbol withstands a long echo better |
+| `v1-g2`: hopping over 2 groups | +27 dB | 0 % | half the band | rejected: confirms the result of the comparison experiment |
+| `v1-time`: byte = consecutive symbols | 0 dB | | thump the same | rejected: no benefit, slightly worse in reverberant |
+| `v1-p3`: parity 1/3 | 0 dB | 0–25 % | 1.29 s; speech -3 dB | rejected for now: 10 % faster but 3 dB more sensitive |
 
-**Missä raja kulkee.**
-- Kohina: noin -6 dB koko kaistan SNR:llä (puhtaalla kanavalla -9 dB).
-- Kaiku: RT60 0,8 s ja suora/kaiku 0 dB toimii. `halli` (RT60 1,2 s, suora
-  ääni 5 dB kaikua heikompi) ei toimi: alkumerkki ja otsake menevät läpi,
-  mutta hyötykuorman virheet ylittävät Reed–Solomonin kapasiteetin (esim.
-  18 korjattavaa, kun raja on noin 16). Uudelleenlähetys ei auta, koska kanava
-  ei muutu. Tämä on se tapaus, johon DESIGN.md:n luvun 7 kestävä tila
-  (pidemmät symbolit, enemmän pariteettia) olisi tarkoitettu.
-- Kolahdukset ja puheen kaltainen häiriö eivät simulaatiossa kaada kehystä
-  vielä -6 dB:n tasollakaan. Profiilit voivat olla liian helppoja; oikea puhe
-  ja oikeat kolahdukset testataan kehässä E.
-- Väärät hälytykset: taajuuspyyhkäisy (kanavamittaus) ja v0:n äänet
-  laukaisevat alkumerkin kerran pari per äänite, mutta otsakkeen tarkistus
-  hylkää ne 0,2 sekunnissa. Valkoinen kohina (20 s) ei laukaise kertaakaan.
+**Where the limit lies.**
+- Noise: about -6 dB whole-band SNR (-9 dB on a clean channel).
+- Echo: RT60 0.8 s and direct/echo 0 dB works. `hall` (RT60 1.2 s, direct
+  sound 5 dB weaker than the echo) does not work: the preamble and the header
+  get through, but the payload errors exceed the Reed–Solomon capacity (e.g.
+  18 to correct when the limit is about 16). Retransmission does not help,
+  because the channel does not change. This is the case that the robust mode
+  of DESIGN.md section 7 (longer symbols, more parity) would be meant for.
+- Thumps and speech-like interference do not bring down a frame in simulation
+  even at the -6 dB level. The profiles may be too easy; real speech and real
+  thumps are tested in loop E.
+- False alarms: a frequency sweep (channel measurement) and v0's sounds
+  trigger the preamble once or twice per recording, but the header check
+  rejects them in 0.2 seconds. White noise (20 s) does not trigger it even
+  once.
 
-**Testattu:** simulaatio (15 profiilia) ja oikea ääni Macin kaiuttimesta omaan
-mikrofoniin (5 äänitettä korpuksessa). Ei vielä kahden koneen välillä.
+**Tested:** simulation (15 profiles) and real audio from the Mac's speaker to
+its own microphone (5 recordings in the corpus). Not yet between two machines.
 
-## 3. Linkkikerros: ryöppy vai kehyskohtainen kuittaus, kättely vai pikalähetys (2026-11-11)
+## 3. Link layer: burst or per-frame ack, handshake or inline start (2026-11-11)
 
-**Mittaustapa.** Mittausajo siirtyi sessiotilaan: kaksi asemaa, kummallekin
-suunnalle oma huonevaste, oman kaiuttimen vuoto omaan mikrofoniin (neljä
-kertaa toista asemaa voimakkaampana), arvotut ääniviiveet (lähtö 20–250 ms,
-tulo 10–150 ms), eri näytteenottotaajuudet ja kellovirhe profiilin mukaan.
-Onnistuminen vaatii, että lähettäjä sai vahvistuksen ja vastaanottaja näytti
-täsmälleen oikean viestin täsmälleen kerran.
+**Measurement method.** The bench run moved to session mode: two stations, a
+separate room response for each direction, the leak of the own speaker into
+the own microphone (four times stronger than the other station), randomly
+drawn audio latencies (output 20–250 ms, input 10–150 ms), different sample
+rates and clock error according to the profile. Success requires that the
+sender got the confirmation and the receiver showed exactly the right message
+exactly once.
 
-**Hypoteesi 1.** Ryöppy ja koontikuittaus on pitkällä viestillä noin
-kolmanneksen nopeampi kuin kehyskohtainen kuittaus (DESIGN.md: 15,5 s vs. 23 s).
+**Hypothesis 1.** A burst with a combined ack is, for a long message, about a
+third faster than per-frame acks (DESIGN.md: 15.5 s vs. 23 s).
 
-| 512 tavua, 6 siementä | ryöppy | 3 kehystä/kuittaus | kehyskohtainen |
+| 512 bytes, 6 seeds | burst | 3 frames/ack | per-frame |
 |---|---|---|---|
-| siirtoaika | 15,4–16,1 s | 17,1–18,6 s | 21,5–24,8 s |
+| transfer time | 15.4–16.1 s | 17.1–18.6 s | 21.5–24.8 s |
 
-Sama tulos profiileilla `huone` ja `kaikuisa`, SNR 20 dB ja 0 dB (ei
-uudelleenlähetyksiä yhdessäkään ajossa, joten aika riippuu vain
-ääniviiveistä). Hypoteesi piti, ja laskelma osui kohdalleen. **Päätös: ryöppy.**
-Tätä ei ole mitattu kanavalla, jossa kehyksiä katoaa usein; siellä lyhyempi
-ryöppy voisi voittaa, koska kadonnut kuittauspyyntö maksaa vähemmän.
+The same result with the profiles `room` and `reverberant`, SNR 20 dB and 0 dB
+(no retransmissions in any run, so the time depends only on the audio
+latencies). The hypothesis held, and the calculation was on target.
+**Decision: burst.** This has not been measured on a channel where frames are
+lost often; there a shorter burst could win, because a lost ack request costs
+less.
 
-**Hypoteesi 2.** Lyhyen viestin lähettäminen aloituskehyksen mukana
-(pikalähetys) lyhentää 60 merkin linkin noin 2,6 sekuntiin heikentämättä
-onnistumista.
+**Hypothesis 2.** Sending a short message along with the start frame (inline
+start) shortens the 60-character link to about 2.6 seconds without weakening
+success.
 
-| 60 merkin linkki, 15 profiilia | kättely | pikalähetys |
+| 60-character link, 15 profiles | handshake | inline start |
 |---|---|---|
-| siirtoaika, mediaani nimellisoloissa | 4,24 s | 2,82 s |
-| onnistuminen nimellisoloissa | 93,6 % | 93,9 % |
-| alin SNR, huone / kaikuisa | -6 / 0 dB | -6 / 0 dB |
-| vastaanottajaa ei ole | noin 8–11 s | noin 8–11 s |
+| transfer time, median in nominal conditions | 4.24 s | 2.82 s |
+| success in nominal conditions | 93.6 % | 93.9 % |
+| min SNR, room / reverberant | -6 / 0 dB | -6 / 0 dB |
+| no receiver | about 8–11 s | about 8–11 s |
 
-Hypoteesi piti. Pelkona oli, että puuttuva vastaanottaja selviäisi
-hitaammin, koska aloituskehys on pidempi. Ratkaisu: vain ensimmäinen
-aloitus kantaa viestin, ja uudet yritykset ovat lyhyitä. **Päätös:
-pikalähetys oletukseksi.** Perustaso päivitetty:
-`bench/results/20261111T085404Z-0cf87ca-muutoksia-v1.json`.
+The hypothesis held. The fear was that a missing receiver would be discovered
+more slowly, because the start frame is longer. The solution: only the first
+start carries the message, and the retries are short. **Decision: inline start
+as the default.** Baseline updated:
+`bench/results/20261111T085404Z-0cf87ca-dirty-v1.json`.
 
-**Löydöksiä toteutuksen aikana.**
-- Vastaanottaja lähetti kuittauksen kahdesti, kun kuittauspyynnön (POLL)
-  alkumerkki tulkittiin alkavaksi dataryöpyksi. Korjattu: muu kuin datakehys
-  nollaa ryöppyhavainnon. Löytyi kehystason testillä.
-- Täsmälleen yhtäaikainen lähetys ei ratkea aina: satunnaisen odotuksen
-  pitää erota yli alkumerkin havaitsemisviiveen (noin 0,2 s). Odotusväli
-  levennettiin 0,3–1,2 sekunnista 0,2–2,2 sekuntiin, jolloin yli 93 %
-  ratkeaa kolmella yrityksellä. Kirjattu tunnetuksi rajoitukseksi.
-- Siirtoaika-arvio (DESIGN.md luku 6) osui mitattuun muutaman prosentin tarkkuudella.
+**Findings during implementation.**
+- The receiver sent the ack twice when the preamble of the ack request (POLL)
+  was interpreted as a starting data burst. Fixed: a non-data frame resets the
+  burst observation. Found with a frame-level test.
+- An exactly simultaneous send is not always resolved: the random waits must
+  differ by more than the preamble detection delay (about 0.2 s). The backoff
+  interval was widened from 0.3–1.2 seconds to 0.2–2.2 seconds, whereby more
+  than 93 % are resolved within three attempts. Recorded as a known
+  limitation.
+- The transfer time estimate (DESIGN.md section 6) matched the measured one to
+  within a few percent.
 
-**Testattu:** vain simulaatiossa (kehystaso: 33 testiä; äänitaso: 8 sessiotestiä
-ja mittausajo). Linkkikerrosta ei ole vielä ajettu oikealla äänellä.
+**Tested:** in simulation only (frame level: 33 tests; audio level: 8 session
+tests and the bench run). The link layer has not yet been run over real audio.
 
-## 4. Kehä D: CLI ja selain samalla Macilla oikealla äänellä (2026-11-11)
+## 4. Loop D: CLI and browser on the same Mac over real audio (2026-11-11)
 
-**Tarkoitus.** Varmistaa wasm-kääre, AudioWorklet-liima ja linkkikerros
-oikealla äänellä ennen toista konetta. Macin CLI (`soundpaste live`, ääni
-SoX:n kautta) ja Chromen sivu jakavat saman kaiuttimen ja mikrofonin.
+**Purpose.** Verify the wasm wrapper, the AudioWorklet glue and the link layer
+over real audio before the second machine. The Mac's CLI (`soundpaste live`,
+audio via SoX) and the page in Chrome share the same speaker and microphone.
 
-| testi | tulos |
+| test | result |
 |---|---|
-| CLI -> selain, 60 merkin linkki (pikalähetys) | perillä 2,59 s, ei korjattavia tavuja |
-| selain -> CLI, 43 tavua ääkkösin ja emojein | perillä 2,2 s (selaimen kello) |
-| CLI -> selain, 300 tavua (kättely + 5 kehyksen ryöppy) | perillä 9,96 s, 5 korjattua tavua |
-| wasm-moduulin vaihto lennossa kahdesti | mikrofoni pysyi päällä, siirto toimi vaihdon jälkeen (1,74 s) |
+| CLI -> browser, 60-character link (inline start) | delivered in 2.59 s, no bytes to correct |
+| browser -> CLI, 43 bytes with non-ASCII letters and emoji | delivered in 2.2 s (browser clock) |
+| CLI -> browser, 300 bytes (handshake + burst of 5 frames) | delivered in 9.96 s, 5 corrected bytes |
+| swapping the wasm module on the fly twice | the microphone stayed on, the transfer worked after the swap (1.74 s) |
 
-**Havainnot.**
-- Kaikki toimi ensimmäisellä yrityksellä. Simulaation arviot (2,8 s ja noin
-  10 s) osuivat oikeaan; oikea ääni oli hieman nopeampi, koska Chromen
-  ilmoittama lähtöviive on vain noin 5 ms.
-- Chrome kytki puheenkäsittelyn pois pyydetysti (kaiunpoisto,
-  kohinanvaimennus ja automaattinen taso: false).
-- Oma kaiku tunnistettiin molemmissa päissä, vaikka kaksi asemaa jakaa saman
-  kaiuttimen.
-- Selaimen mittaama SNR oli 23–30 dB ja taso -39 dBFS järjestelmän
-  äänenvoimakkuudella 44 %.
+**Observations.**
+- Everything worked on the first attempt. The simulation's estimates (2.8 s
+  and about 10 s) were right; real audio was slightly faster, because the
+  output latency reported by Chrome is only about 5 ms.
+- Chrome turned the speech processing off as requested (echo cancellation,
+  noise suppression and automatic gain: false).
+- The own echo was recognised at both ends, even though the two stations share
+  the same speaker.
+- The SNR measured by the browser was 23–30 dB and the level -39 dBFS at a
+  system volume of 44 %.
 
-**Rajaus.** Tämä on edelleen yhden laitteen kaiutin ja mikrofoni. Kahden
-koneen välistä kanavaa (kehä E) ei ole vielä ajettu.
+**Scope.** This is still the speaker and microphone of a single device. The
+channel between two machines (loop E) has not yet been run.
 
-## 5. Kehä E, ensimmäinen kahden koneen ajo: väärät hälytykset ja hiljainen paluusuunta (2026-11-11)
+## 5. Loop E, first two-machine run: false alarms and a quiet return direction (2026-11-11)
 
-**Asetelma.** PC:n selaimessa julkaistu sivu (sairanen.org/soundpaste), Macilla
-komentoriviasema (`soundpaste live`), joka äänitti neljä minuuttia. Käyttäjä
-lähetti PC:ltä viestejä. Äänite: `devdata/diag-pc.wav` (ei versionhallinnassa),
-siitä kolme leikettä korpuksessa (`...-pc-mac-1..3-sessio-v1`).
+**Setup.** The published page (sairanen.org/soundpaste) in the PC's browser, a
+command-line station on the Mac (`soundpaste live`) that recorded for four
+minutes. The user sent messages from the PC. Recording: `devdata/diag-pc.wav`
+(not in version control), three clips of it in the corpus
+(`...-pc-mac-1..3-sessio-v1`).
 
-**Harha-askel.** Ensimmäiset "perillä"-tulokset tulkitsin PC:n kuittauksiksi,
-mutta kuittaukset tulivat Macin omasta selaimesta, jossa sivu oli myös auki.
-Paljastui äänitteen tasoista: kuittaus kuului täsmälleen samalla tasolla
-(-39 dBFS) kuin oma lähetys. Opetus: kahden koneen testissä vastaajan
-tunnistaminen vaatii tason tai lokin, ei pelkkää kuittausta.
+**A misstep.** I interpreted the first "delivered" results as the PC's acks,
+but the acks came from the Mac's own browser, where the page was also open.
+This was revealed by the levels in the recording: the ack was heard at exactly
+the same level (-39 dBFS) as the own transmission. The lesson: in a
+two-machine test, identifying the responder requires the level or a log, not
+just the ack.
 
-**Havainnot oikeasta datasta.**
+**Observations from real data.**
 
-| havainto | luku |
+| observation | figure |
 |---|---|
-| PC -> Mac: aloituskehykset purkautuivat | kaikki, SNR 17–27 dB, taso -36…-44 dBFS |
-| Mac -> PC: kuittaus ei aluksi kuulunut | PC toisti saman aloituksen 3 kertaa; korjaantui, kun äänenvoimakkuutta nostettiin |
-| kaksoiskappaleiden tunnistus | toimi: viesti näkyi Macilla kerran, vaikka aloitus tuli kolmesti |
-| vääriä alkumerkkihavaintoja | 246 neljässä minuutissa (ryppäinä, näppäimistön naputus) |
-| turhia kuittauslähetyksiä väärien havaintojen takia | 6 yhden keskeneräisen session aikana |
+| PC -> Mac: start frames decoded | all, SNR 17–27 dB, level -36…-44 dBFS |
+| Mac -> PC: the ack was at first not heard | the PC repeated the same start 3 times; fixed itself when the volume was raised |
+| duplicate recognition | worked: the message was shown once on the Mac although the start arrived three times |
+| false preamble detections | 246 in four minutes (in clusters, keyboard typing) |
+| needless ack transmissions because of false detections | 6 during one unfinished session |
 
-**Hypoteesi.** Naksahdus ylittää suhteellisen tehokynnyksen, koska sitä
-edeltää hiljaisuus, mutta se ei näytä pyyhkäisyltä. Tarkistus "kuinka suuri
-osa alkumerkin mittaisen ikkunan kaistaenergiasta selittyy pyyhkäisyllä"
-(puhdas pyyhkäisy 1, naksahdus lähellä 0) poistaa väärät hälytykset
-heikentämättä herkkyyttä.
+**Hypothesis.** A click exceeds the relative power threshold because it is
+preceded by silence, but it does not look like a chirp. The check "how large a
+part of the band energy of a preamble-length window is explained by the chirp"
+(pure chirp 1, a click close to 0) removes the false alarms without weakening
+sensitivity.
 
-| kynnys (`chirp_fraction`) | vääriä hälytyksiä äänitteessä | oikeita kehyksiä (44) | alin SNR simulaatiossa |
+| threshold (`chirp_fraction`) | false alarms in the recording | real frames (44) | min SNR in simulation |
 |---|---|---|---|
-| 0 (ei tarkistusta) | 246 | 44 | perustaso |
-| 0,03 | 110 | 44 | – |
-| 0,06 | 2 | 44 | sama kaikissa profiileissa |
-| 0,08 (valittu) | 0 | 44 | sama |
-| 0,12 | 0 | 44 | sama kaikissa profiileissa |
+| 0 (no check) | 246 | 44 | baseline |
+| 0.03 | 110 | 44 | – |
+| 0.06 | 2 | 44 | the same in all profiles |
+| 0.08 (chosen) | 0 | 44 | the same |
+| 0.12 | 0 | 44 | the same in all profiles |
 
-Hypoteesi piti. Simulaatiossa kynnyksellä ei ollut mitään hintaa yhdessäkään
-profiilissa. Valittu 0,08 jättää varaa molempiin suuntiin, mutta se on
-viritetty yhden äänitteen perusteella: heikon oikean signaalin raja kaiussa
-on mittaamatta oikealla äänellä.
+The hypothesis held. In simulation the threshold had no cost in any profile.
+The chosen 0.08 leaves room in both directions, but it has been tuned on the
+basis of a single recording: the limit for a weak real signal in echo is
+unmeasured over real audio.
 
-**Muut muutokset.**
-- Linkkikerros: pelkkä alkumerkkihavainto ei enää laukaise hiljaisuuteen
-  perustuvaa kuittausta. Vain kehys, jonka otsake purkautui, lasketaan
-  merkiksi käynnissä olevasta ryöpystä.
-- Lähetteen taso +5 dB (tehollisarvo 0,25 -> 0,45, leikkausraja 0,5 -> 0,9),
-  koska paluusuunta oli liian hiljainen. Tämä ei korvaa äänenvoimakkuuden
-  nostamista, mutta siirtää rajaa.
-- Hylätyt kehykset näkyvät nyt lokissa tasoineen (vianetsintänäkymä).
+**Other changes.**
+- Link layer: a mere preamble detection no longer triggers the silence-based
+  ack. Only a frame whose header decoded counts as a sign of an ongoing burst.
+- Transmit level +5 dB (RMS 0.25 -> 0.45, clip limit 0.5 -> 0.9), because the
+  return direction was too quiet. This does not replace raising the volume,
+  but it moves the limit.
+- Rejected frames are now shown in the log with their levels (troubleshooting
+  view).
 
-**Tulos.** Mittausajo ennallaan (2,81 s, 93,9 %, ei heikennyksiä), korpus 6/6
-tällä aaltomuodolla. Perustaso päivitetty.
+**Result.** The bench run is unchanged (2.81 s, 93.9 %, no regressions),
+corpus 6/6 with this waveform. Baseline updated.
 
-**Auki.** PC:n päästä ei ole lokeja eikä äänitteitä (julkaistu sivu ei lähetä
-niitä), joten Mac -> PC -suunnan taso, PC:n mikrofonin käsittely ja kanavan
-vaste ovat mittaamatta. Ne vaativat testiaseman (README, kehä E).
+**Open.** There are no logs or recordings from the PC's end (the published
+page does not send them), so the level of the Mac -> PC direction, the PC's
+microphone processing and the channel response are unmeasured. They require
+the test station (README, loop E).
+
+## 6. Translation to English (no functional change)
+
+The project (code comments, CLI output, UI, docs) was translated from Finnish
+to English. Channel profiles were renamed (`huone` -> `room`, `kaikuisa` ->
+`reverberant`, `halli` -> `hall`, and so on), and the names in earlier result
+files under `bench/results/` were translated in place so that `compare` keeps
+working across the change.
+
+The bench seeds are hashed from the profile name, so the renamed profiles draw
+different noise. With 6 runs per point the numbers moved within that noise:
+transfer time 2.81 -> 2.85 s, success rate 93.9 -> 94.2 %, and `clean` at
+-9 dB went from passing to 5/6 (83 %), which `compare` reports as a regression
+of the minimum SNR from -9 to -6 dB. No modem code changed (the diff in
+`modem-core` is comments and string literals only), so this is taken as seed
+noise and the baseline was updated. The labels in the stored modulation
+comparison outputs in `bench/experiments/` were translated in place; their
+numbers are the original ones.

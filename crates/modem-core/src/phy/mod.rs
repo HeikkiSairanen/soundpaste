@@ -1,80 +1,80 @@
-//! Fyysinen kerros: tavut -> f32-näytteet ja f32-näytteet -> tavut.
+//! Physical layer: bytes -> f32 samples and f32 samples -> bytes.
 //!
-//! Jokainen aaltomuoto toteuttaa [`Modulator`]- ja [`Demodulator`]-rajapinnat.
-//! Vanhat aaltomuodot pidetään mukana ([`PhyKind`]), jotta uutta versiota voi
-//! verrata vanhaan samalla mittaristolla.
+//! Every waveform implements the [`Modulator`] and [`Demodulator`] traits.
+//! Old waveforms are kept ([`PhyKind`]) so that a new version can be
+//! compared with the old one using the same bench.
 //!
-//! Vastaanotin on virtaava: sille syötetään näytelohkoja sitä mukaa kuin niitä
-//! tulee, ja se palauttaa tapahtumia ([`PhyEvent`]).
+//! The receiver is streaming: it is fed sample blocks as they
+//! arrive, and it returns events ([`PhyEvent`]).
 
 pub mod bfsk;
 pub mod mfsk;
 
-/// Vastaanoton laatutiedot yhdestä kehyksestä.
+/// Reception quality data for one frame.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RxStats {
-    /// Kehyksen alku ja loppu vastaanottimen näytelaskurissa.
+    /// Start and end of the frame in the receiver's sample counter.
     pub start_sample: u64,
     pub end_sample: u64,
-    /// Arvio signaali-kohinasuhteesta modeemin omalla kaistalla (dB).
+    /// Estimate of the signal-to-noise ratio in the modem's own band (dB).
     pub snr_db: f32,
-    /// Tulosignaalin tehollisarvo kehyksen aikana (täysi asteikko = 1.0).
+    /// RMS of the input signal during the frame (full scale = 1.0).
     pub rms: f32,
-    /// Osuus näytteistä, jotka ovat leikkautuneet (|x| >= 0,99).
+    /// Share of samples that are clipped (|x| >= 0.99).
     pub clipped: f32,
-    /// Virheenkorjauksen korjaamien symbolien määrä.
+    /// Number of symbols corrected by error correction.
     pub corrected: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailReason {
-    /// Otsake ei ollut tulkittavissa.
+    /// The header could not be decoded.
     Header,
-    /// Tarkistussumma ei täsmää (virheenkorjaus ei riittänyt).
+    /// The checksum does not match (error correction was not enough).
     Checksum,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PhyEvent {
-    /// Alkumerkki havaittu; kehyksen vastaanotto alkoi näytteestä `at`.
+    /// Preamble detected; frame reception started at sample `at`.
     Detected { at: u64 },
-    /// Ehjä kehys. `raw` on koodattu tavujono ennen virheenkorjausta
-    /// (bittivirhesuhteen mittaamista varten).
+    /// Intact frame. `raw` is the encoded byte string before error correction
+    /// (for measuring the bit error rate).
     Frame { payload: Vec<u8>, raw: Vec<u8>, stats: RxStats },
-    /// Kehys havaittiin, mutta sitä ei saatu purettua.
+    /// A frame was detected but could not be decoded.
     Failed { reason: FailReason, raw: Vec<u8>, stats: RxStats },
 }
 
 pub trait Modulator {
-    /// Suurin hyötykuorma tavuina yhdessä kehyksessä.
+    /// Largest payload in bytes in one frame.
     fn max_payload(&self) -> usize;
-    /// Kehyksen aaltomuoto. Näytteenottotaajuus annettiin luotaessa.
+    /// Waveform of a frame. The sample rate was given at creation.
     fn modulate(&self, payload: &[u8]) -> Vec<f32>;
-    /// Kanavalle lähtevä koodattu tavujono (vertailukohta `PhyEvent::raw`:lle).
+    /// The encoded byte string going to the channel (reference for `PhyEvent::raw`).
     fn coded(&self, payload: &[u8]) -> Vec<u8>;
-    /// Kehyksen kesto sekunteina.
+    /// Frame duration in seconds.
     fn duration(&self, payload_len: usize) -> f64;
 }
 
 pub trait Demodulator {
-    /// Syötä seuraava näytelohko. Valmistuneet tapahtumat lisätään `events`-vektoriin.
+    /// Feed the next sample block. Finished events are appended to `events`.
     fn push(&mut self, samples: &[f32], events: &mut Vec<PhyEvent>);
-    /// Onko kehyksen vastaanotto kesken?
+    /// Is a frame reception in progress?
     fn receiving(&self) -> bool;
-    /// Unohda keskeneräinen kehys (esim. oman lähetyksen jälkeen).
+    /// Forget the unfinished frame (e.g. after our own transmission).
     fn reset(&mut self);
-    /// Tähän mennessä syötettyjen näytteiden määrä.
+    /// Number of samples fed so far.
     fn position(&self) -> u64;
 }
 
-/// Tunnetut aaltomuodot. Jokainen MFSK-parametrijoukko on oma aaltomuotonsa,
-/// jolla on nimi: kokeiluversiot pysyvät vertailtavina ja korpuksen äänitteet
-/// tietävät, millä ne on tehty.
+/// Known waveforms. Every MFSK parameter set is its own waveform
+/// with a name: experimental versions stay comparable and corpus recordings
+/// know what they were made with.
 #[derive(Debug, Clone, Copy)]
 pub enum PhyKind {
-    /// Karkea ensimmäinen versio: 2-FSK, 100 baudia, ei virheenkorjausta.
+    /// Crude first version: 2-FSK, 100 baud, no error correction.
     V0Bfsk,
-    /// Moniääni-MFSK sävelhypyllä (ks. [`mfsk`]).
+    /// Multitone MFSK with tone hopping (see [`mfsk`]).
     Mfsk(&'static mfsk::MfskParams),
 }
 
@@ -84,16 +84,16 @@ impl PartialEq for PhyKind {
     }
 }
 
-/// MFSK-parametrijoukot. Ensimmäinen on oletus.
+/// MFSK parameter sets. The first is the default.
 pub static MFSK_PRESETS: &[mfsk::MfskParams] = &[
     mfsk::BASE,
-    // Kokeiluversiot (EXPERIMENTS.md kohta 2). Nimi kertoo, mikä poikkeaa perusversiosta.
+    // Experimental versions (EXPERIMENTS.md entry 2). The name tells what differs from the base version.
     mfsk::MfskParams { name: "v1-8x20", k: 8, t_win: 0.020, t_guard: 0.005, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-noera", erasure_ratio: 0.0, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-time", layout: mfsk::ByteLayout::Time, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-p3", parity_num: 1, parity_den: 3, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-g2", g: 2, ..mfsk::BASE },
-    // Alkumerkin muototarkistuksen kynnykset (EXPERIMENTS.md kohta 5).
+    // Thresholds of the preamble shape check (EXPERIMENTS.md entry 5).
     mfsk::MfskParams { name: "v1-cf0", chirp_fraction: 0.0, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-cf03", chirp_fraction: 0.03, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-cf06", chirp_fraction: 0.06, ..mfsk::BASE },
@@ -101,7 +101,7 @@ pub static MFSK_PRESETS: &[mfsk::MfskParams] = &[
 ];
 
 impl PhyKind {
-    /// Oletusaaltomuoto: MFSK-perusversio.
+    /// Default waveform: the MFSK base version.
     pub const DEFAULT: PhyKind = PhyKind::Mfsk(&mfsk::BASE);
 
     pub fn all() -> Vec<PhyKind> {
@@ -136,8 +136,8 @@ impl PhyKind {
     }
 }
 
-/// Bittivirheiden määrä kahden tavujonon välillä. Pituuseron bitit lasketaan
-/// virheiksi puoliksi (arvaus osuu oikeaan joka toisella bitillä).
+/// Number of bit errors between two byte strings. Bits of the length difference count
+/// as errors by half (a guess is right on every other bit).
 pub fn bit_errors(sent: &[u8], received: &[u8]) -> (u64, u64) {
     let common = sent.len().min(received.len());
     let mut errors: u64 = sent[..common].iter().zip(&received[..common]).map(|(a, b)| (a ^ b).count_ones() as u64).sum();

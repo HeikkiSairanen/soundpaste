@@ -1,13 +1,13 @@
-// soundpaste: AudioWorklet-prosessori.
+// soundpaste: the AudioWorklet processor.
 //
-// Pyörii selaimen äänisäikeessä. Tehtävät:
-// - kopioi mikrofonin näytteet wasm-moduulin puskuriin ja kaiuttimen näytteet takaisin
-// - välittää käyttöliittymän komennot wasm-moduulille ja tapahtumat takaisin
-// - pitää tallessa viimeiset 45 sekuntia mikrofoniääntä vianetsintää varten
+// Runs on the browser's audio thread. It:
+// - copies microphone samples into the wasm module's buffer and speaker samples back
+// - passes UI commands to the wasm module and events back
+// - keeps the last 45 seconds of microphone audio for troubleshooting
 //
-// Kaikki signaalinkäsittely ja protokolla on wasm-moduulissa (Rust). Tässä ei
-// ole verkkoyhteyksiä eikä TextDecoderia (sitä ei ole äänisäikeessä), joten
-// tapahtumat kulkevat pääsäikeelle tavuina.
+// All signal processing and the protocol live in the wasm module (Rust). There
+// are no network connections here and no TextDecoder (the audio thread has
+// none), so events travel to the main thread as bytes.
 
 const RING_SECONDS = 45;
 const LEVEL_INTERVAL_S = 0.05;
@@ -15,8 +15,8 @@ const LEVEL_INTERVAL_S = 0.05;
 class SoundpasteProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.x = null; // wasm-moduulin viennit
-    this.mem = null; // wasm-muisti, jota vasten näkymät on luotu
+    this.x = null; // the wasm module's exports
+    this.mem = null; // the wasm memory the views were created against
     this.ring = new Float32Array(Math.round(sampleRate * RING_SECONDS));
     this.ringPos = 0;
     this.ringFilled = 0;
@@ -26,7 +26,7 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
   }
 
   views() {
-    // Wasm-muistin kasvaessa vanhat näkymät irtoavat, joten ne luodaan uudelleen.
+    // When wasm memory grows the old views detach, so they are recreated.
     const x = this.x;
     if (this.mem !== x.memory.buffer) {
       this.mem = x.memory.buffer;
@@ -39,7 +39,7 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
   onMessage(m) {
     try {
       if (m.type === 'load') {
-        // Uusi moduuli voidaan vaihtaa lennossa: mikrofoni ja ääni pysyvät päällä.
+        // A new module can be swapped in live: the microphone and audio stay on.
         const module = new WebAssembly.Module(m.wasm);
         const x = new WebAssembly.Instance(module, {}).exports;
         x.sp_new(sampleRate, m.seed[0] >>> 0, m.seed[1] >>> 0, m.flags | 0);
@@ -65,7 +65,7 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
       } else if (m.type === 'estimate') {
         this.port.postMessage({ type: 'estimate', len: m.len, seconds: x.sp_estimate(m.len) });
       } else if (m.type === 'dump') {
-        // Rengaspuskuri aikajärjestykseen.
+        // Ring buffer into chronological order.
         const n = this.ringFilled;
         const out = new Float32Array(n);
         const start = (this.ringPos - n + this.ring.length) % this.ring.length;
@@ -85,7 +85,7 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
     const input = inputs[0] && inputs[0][0];
     const n = out.length;
 
-    // Äänite talteen (myös ennen kuin moduuli on ladattu).
+    // Keep the recording (also before the module has loaded).
     if (input) {
       for (let i = 0; i < n; i++) {
         this.ring[this.ringPos] = input[i];
@@ -105,13 +105,13 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
     this.views();
     out.set(this.outView.subarray(0, n));
 
-    // Tapahtumat pääsäikeelle.
+    // Events to the main thread.
     let events = null;
     for (;;) {
       let len = x.sp_poll_event(this.eventPtr, this.eventCap);
       if (len === 0) break;
       if (len < 0) {
-        // Puskuri oli liian pieni: varataan isompi ja yritetään uudelleen.
+        // The buffer was too small: allocate a bigger one and retry.
         x.sp_free(this.eventPtr, this.eventCap);
         this.eventCap = -len + 1024;
         this.eventPtr = x.sp_alloc(this.eventCap);
@@ -122,7 +122,7 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
     }
     if (events) this.port.postMessage({ type: 'events', events, now: x.sp_now_ms() }, events);
 
-    // Signaalitaso ja laskurit noin 20 kertaa sekunnissa.
+    // Signal level and counters about 20 times a second.
     this.sinceLevel += n;
     if (this.sinceLevel >= sampleRate * LEVEL_INTERVAL_S) {
       this.sinceLevel = 0;

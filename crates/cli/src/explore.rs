@@ -1,18 +1,18 @@
-//! Modulaatiovaihtoehtojen vertailukoe (DESIGN.md:n pohjaksi).
+//! Modulation comparison experiment (the basis for DESIGN.md).
 //!
-//! Jokaisella vaihtoehdolla lähetetään satunnaisia symboleita kanavaprofiilien
-//! läpi ja mitataan raaka bittivirhesuhde, kun symbolien ajoitus tunnetaan
-//! täsmälleen (ihanteellinen tahdistus). Näin nähdään pelkän modulaation
-//! kestävyys kaikua ja kohinaa vastaan ilman kehystystä ja virheenkorjausta.
+//! Each scheme sends random symbols through the channel profiles and the raw
+//! bit error rate is measured with the symbol timing known exactly (ideal
+//! synchronization). This shows the robustness of the modulation alone against
+//! reverb and noise, without framing and error correction.
 //!
-//! Kaikki vaihtoehdot rakentuvat samasta palikasta: tasavälisestä sävelristikosta,
-//! jossa kullakin symbolilla osa sävelistä on päällä.
-//! - M-FSK: jokaisessa alikanavassa yksi M:stä sävelestä on päällä (tieto on
-//!   sävelen valinnassa, ilmaisu energian perusteella).
-//! - hyppy: peräkkäiset symbolit käyttävät eri sävelryhmää (G ryhmää), jolloin
-//!   edellisen symbolin kaiku ei osu nykyisen symbolin ehdokkaisiin.
-//! - DQPSK: kaikki sävelet ovat päällä ja tieto on vaiheen muutoksessa
-//!   edelliseen symboliin nähden (OFDM:n yksinkertaisin muoto).
+//! All schemes are built from the same block: an evenly spaced tone grid in
+//! which some of the tones are on during each symbol.
+//! - M-FSK: in each subchannel one of M tones is on (the information is in the
+//!   choice of tone, detection is by energy).
+//! - hopping: consecutive symbols use a different tone group (G groups), so the
+//!   echo of the previous symbol does not land on the current symbol's candidates.
+//! - DQPSK: all tones are on and the information is in the phase change relative
+//!   to the previous symbol (the simplest form of OFDM).
 
 use crate::args::Args;
 use crate::bench;
@@ -23,11 +23,11 @@ use std::process::ExitCode;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Layout {
-    /// Sävel = alikanava·(M·G) + arvo·G + ryhmä: ehdokkaat ovat G sävelvälin päässä toisistaan.
+    /// Tone = subchannel·(M·G) + value·G + group: candidates are G tone spacings apart.
     Interleaved,
-    /// Sävel = alikanava·(M·G) + ryhmä·M + arvo: ryhmät ovat vierekkäisiä lohkoja alikanavan sisällä.
+    /// Tone = subchannel·(M·G) + group·M + value: groups are adjacent blocks within a subchannel.
     Block,
-    /// Sävel = ryhmä·(K·M) + alikanava·M + arvo: koko kaista on jaettu G lohkoon.
+    /// Tone = group·(K·M) + subchannel·M + value: the whole band is split into G blocks.
     Band,
 }
 
@@ -42,9 +42,9 @@ pub struct Scheme {
     pub name: &'static str,
     pub kind: Kind,
     pub f0: f64,
-    /// Ilmaisuikkunan pituus; sävelväli on 1/t_win.
+    /// Detection window length; the tone spacing is 1/t_win.
     pub t_win: f64,
-    /// Suoja-aika ennen ikkunaa.
+    /// Guard time before the window.
     pub t_guard: f64,
 }
 
@@ -88,7 +88,7 @@ impl Scheme {
     }
 }
 
-/// Satunnaiset symbolit: MFSK:lle alikanavien arvot, DQPSK:lle vaihesiirrot 0..4.
+/// Random symbols: subchannel values for MFSK, phase shifts 0..4 for DQPSK.
 fn random_symbols(s: &Scheme, count: usize, rng: &mut Rng) -> Vec<Vec<usize>> {
     let (subs, levels) = match s.kind {
         Kind::Mfsk { m, k, .. } => (k, m),
@@ -101,8 +101,8 @@ pub fn modulate(s: &Scheme, symbols: &[Vec<usize>], fs: f64, rng: &mut Rng) -> V
     let n_sym = (s.t_sym() * fs).round() as usize;
     let ramp = ((s.t_guard * 0.5).min(0.003) * fs) as usize;
     let mut out = vec![0.0f32; n_sym * symbols.len()];
-    // Jokaisella sävelellä on oma satunnainen alkuvaiheensa, jotta samanaikaiset
-    // sävelet eivät summaudu yhdeksi piikiksi.
+    // Each tone has its own random initial phase, so that simultaneous
+    // tones do not add up into a single peak.
     let phases: Vec<f64> = (0..s.tones()).map(|_| rng.range(0.0, TAU)).collect();
     let mut dq_phase = vec![0usize; s.tones()];
     for (t, sym) in symbols.iter().enumerate() {
@@ -126,11 +126,11 @@ pub fn modulate(s: &Scheme, symbols: &[Vec<usize>], fs: f64, rng: &mut Rng) -> V
     out
 }
 
-/// Yhden sävelen kompleksinen DFT-kerroin ikkunassa.
+/// Complex DFT coefficient of one tone over the window.
 fn bin(x: &[f32], freq: f64, fs: f64, t0: usize) -> (f64, f64) {
     let w = TAU * freq / fs;
     let (mut re, mut im) = (0.0f64, 0.0f64);
-    // Vaiheen eteneminen rekursiolla (ei sin/cos-kutsua joka näytteellä).
+    // Advance the phase by recursion (no sin/cos call per sample).
     let (cw, sw) = (w.cos(), w.sin());
     let (mut c, mut s) = ((w * t0 as f64).cos(), (w * t0 as f64).sin());
     for &v in x {
@@ -143,7 +143,7 @@ fn bin(x: &[f32], freq: f64, fs: f64, t0: usize) -> (f64, f64) {
     (re, im)
 }
 
-/// Palauttaa (bittivirheet, bitit).
+/// Returns (bit errors, bits).
 pub fn demodulate(s: &Scheme, rx: &[f32], start: usize, fs: f64, symbols: &[Vec<usize>]) -> (u64, u64) {
     let n_sym = (s.t_sym() * fs).round() as usize;
     let n_win = (s.t_win * fs).round() as usize;
@@ -175,11 +175,11 @@ pub fn demodulate(s: &Scheme, rx: &[f32], start: usize, fs: f64, symbols: &[Vec<
                 let cur: Vec<(f64, f64)> = (0..n).map(|k| bin(win, s.freq(k), fs, a)).collect();
                 if !prev.is_empty() {
                     for (k, &v) in sym.iter().enumerate() {
-                        // cur · conj(prev): vaihe-ero edelliseen symboliin.
+                        // cur · conj(prev): phase difference to the previous symbol.
                         let re = cur[k].0 * prev[k].0 + cur[k].1 * prev[k].1;
                         let im = cur[k].1 * prev[k].0 - cur[k].0 * prev[k].1;
                         let q = ((im.atan2(re) / (TAU / 4.0)).round() as i64).rem_euclid(4) as usize;
-                        // Vaihesiirto q vastaa bittejä Gray-koodattuna: viereinen vaihe = 1 bittivirhe.
+                        // Phase shift q maps to bits in Gray code: an adjacent phase = 1 bit error.
                         let gray = |x: usize| x ^ (x >> 1);
                         errors += (gray(q) ^ gray(v)).count_ones() as u64;
                         bits += 2;
@@ -192,7 +192,7 @@ pub fn demodulate(s: &Scheme, rx: &[f32], start: usize, fs: f64, symbols: &[Vec<
     (errors, bits)
 }
 
-/// Suoran äänen saapumishetki `run_oneway`:n tuottamassa signaalissa.
+/// Arrival time of the direct sound in the signal produced by `run_oneway`.
 fn direct_arrival(cfg: &OneWay) -> usize {
     let lead = (cfg.lead_s * cfg.fs_tx) as usize;
     if cfg.ir.len() <= 1 {
@@ -207,28 +207,28 @@ pub fn schemes() -> Vec<Scheme> {
     use Layout::*;
     let s = |name, kind, f0, t_win, t_guard| Scheme { name, kind, f0, t_win, t_guard };
     vec![
-        s("2-FSK 10 ms (kuten v0)", Mfsk { m: 2, k: 1, g: 1, layout: Block }, 2000.0, 0.010, 0.0),
+        s("2-FSK 10 ms (like v0)", Mfsk { m: 2, k: 1, g: 1, layout: Block }, 2000.0, 0.010, 0.0),
         s("16-FSK 40+10 ms", Mfsk { m: 16, k: 1, g: 1, layout: Block }, 2000.0, 0.040, 0.010),
-        s("16-FSK 40+10 ms, hyppy G=4", Mfsk { m: 16, k: 1, g: 4, layout: Interleaved }, 2000.0, 0.040, 0.010),
-        s("16x 4-FSK 40+10, ei hyppyä", Mfsk { m: 4, k: 16, g: 1, layout: Block }, 1000.0, 0.040, 0.010),
-        s("16x 4-FSK 40+10, G=2 lomitettu", Mfsk { m: 4, k: 16, g: 2, layout: Interleaved }, 1000.0, 0.040, 0.010),
-        s("16x 4-FSK 40+10, G=4 lomitettu", Mfsk { m: 4, k: 16, g: 4, layout: Interleaved }, 1000.0, 0.040, 0.010),
-        s("16x 4-FSK 40+10, G=4 lohko", Mfsk { m: 4, k: 16, g: 4, layout: Block }, 1000.0, 0.040, 0.010),
-        s("16x 4-FSK 40+10, G=4 kaista", Mfsk { m: 4, k: 16, g: 4, layout: Band }, 1000.0, 0.040, 0.010),
-        s("8x 4-FSK 20+5, G=4 lomitettu", Mfsk { m: 4, k: 8, g: 4, layout: Interleaved }, 1000.0, 0.020, 0.005),
-        s("8x 4-FSK 20+5, G=8 lomitettu", Mfsk { m: 4, k: 8, g: 8, layout: Interleaved }, 1000.0, 0.020, 0.005),
-        s("8x 16-FSK 40+10, G=2 lomit.", Mfsk { m: 16, k: 8, g: 2, layout: Interleaved }, 1000.0, 0.040, 0.010),
-        s("8x 4-FSK 40+10, G=4 lomitettu", Mfsk { m: 4, k: 8, g: 4, layout: Interleaved }, 1500.0, 0.040, 0.010),
-        s("32x 4-FSK 80+20, G=4 lomit.", Mfsk { m: 4, k: 32, g: 4, layout: Interleaved }, 1000.0, 0.080, 0.020),
-        s("DQPSK 64 säveltä 40+10", Dqpsk { n: 64 }, 2000.0, 0.040, 0.010),
-        s("DQPSK 256 säveltä 40+10", Dqpsk { n: 256 }, 1000.0, 0.040, 0.010),
-        s("DQPSK 128 säveltä 20+10", Dqpsk { n: 128 }, 1000.0, 0.020, 0.010),
-        s("DQPSK 512 säveltä 80+20", Dqpsk { n: 512 }, 1000.0, 0.080, 0.020),
+        s("16-FSK 40+10 ms, hopping G=4", Mfsk { m: 16, k: 1, g: 4, layout: Interleaved }, 2000.0, 0.040, 0.010),
+        s("16x 4-FSK 40+10, no hopping", Mfsk { m: 4, k: 16, g: 1, layout: Block }, 1000.0, 0.040, 0.010),
+        s("16x 4-FSK 40+10, G=2 interl.", Mfsk { m: 4, k: 16, g: 2, layout: Interleaved }, 1000.0, 0.040, 0.010),
+        s("16x 4-FSK 40+10, G=4 interl.", Mfsk { m: 4, k: 16, g: 4, layout: Interleaved }, 1000.0, 0.040, 0.010),
+        s("16x 4-FSK 40+10, G=4 block", Mfsk { m: 4, k: 16, g: 4, layout: Block }, 1000.0, 0.040, 0.010),
+        s("16x 4-FSK 40+10, G=4 band", Mfsk { m: 4, k: 16, g: 4, layout: Band }, 1000.0, 0.040, 0.010),
+        s("8x 4-FSK 20+5, G=4 interl.", Mfsk { m: 4, k: 8, g: 4, layout: Interleaved }, 1000.0, 0.020, 0.005),
+        s("8x 4-FSK 20+5, G=8 interl.", Mfsk { m: 4, k: 8, g: 8, layout: Interleaved }, 1000.0, 0.020, 0.005),
+        s("8x 16-FSK 40+10, G=2 interl.", Mfsk { m: 16, k: 8, g: 2, layout: Interleaved }, 1000.0, 0.040, 0.010),
+        s("8x 4-FSK 40+10, G=4 interl.", Mfsk { m: 4, k: 8, g: 4, layout: Interleaved }, 1500.0, 0.040, 0.010),
+        s("32x 4-FSK 80+20, G=4 interl.", Mfsk { m: 4, k: 32, g: 4, layout: Interleaved }, 1000.0, 0.080, 0.020),
+        s("DQPSK 64 tones 40+10", Dqpsk { n: 64 }, 2000.0, 0.040, 0.010),
+        s("DQPSK 256 tones 40+10", Dqpsk { n: 256 }, 1000.0, 0.040, 0.010),
+        s("DQPSK 128 tones 20+10", Dqpsk { n: 128 }, 1000.0, 0.020, 0.010),
+        s("DQPSK 512 tones 80+20", Dqpsk { n: 512 }, 1000.0, 0.080, 0.020),
     ]
 }
 
-/// Binäärisen symmetrisen kanavan kapasiteetti: osuus bittinopeudesta, joka
-/// ihanteellisella virheenkorjauksella jäisi hyötykäyttöön.
+/// Capacity of the binary symmetric channel: the fraction of the bit rate that
+/// would remain as payload with ideal error correction.
 fn bsc_capacity(ber: f64) -> f64 {
     let p = ber.clamp(1e-12, 0.5);
     1.0 + p * p.log2() + (1.0 - p) * (1.0 - p).log2()
@@ -241,27 +241,27 @@ pub fn cmd_explore(raw: &[String]) -> Result<ExitCode, String> {
     let fs = 48000.0;
     let mut profiles = bench::synthetic_profiles();
     profiles.extend(bench::measured_profiles(false));
-    // (profiili, SNR): kaikurajoitteiset tapaukset hyvällä SNR:llä ja kohinarajoitteiset huonolla.
-    let mut cases: Vec<(String, f64)> = vec![("puhdas".into(), 0.0), ("huone".into(), 20.0), ("huone".into(), 0.0), ("kaikuisa".into(), 20.0), ("kaikuisa".into(), 5.0)];
+    // (profile, SNR): reverb-limited cases at good SNR and noise-limited ones at poor SNR.
+    let mut cases: Vec<(String, f64)> = vec![("clean".into(), 0.0), ("room".into(), 20.0), ("room".into(), 0.0), ("reverberant".into(), 20.0), ("reverberant".into(), 5.0)];
     for p in &profiles {
-        if p.name.starts_with("mitattu:") && p.name.contains("g100") {
+        if p.name.starts_with("measured:") && p.name.contains("g100") {
             cases.push((p.name.clone(), 20.0));
         }
     }
-    println!("MODULAATIOVERTAILU: raaka bittivirhesuhde (%) ihanteellisella tahdistuksella, {seeds} x {seconds} s");
-    println!("SNR koko kaistalla 0..24 kHz, sama kokonaisteho kaikilla. 'netto' = bittinopeus x BSC-kapasiteetti (ihanteellinen koodaus).");
-    print!("{:<32}{:>7}{:>7}{:>6}", "vaihtoehto", "bit/s", "kaista", "PAPR");
+    println!("MODULATION COMPARISON: raw bit error rate (%) with ideal synchronization, {seeds} x {seconds} s");
+    println!("SNR over the full band 0..24 kHz, same total power for all. 'net' = bit rate x BSC capacity (ideal coding).");
+    print!("{:<32}{:>7}{:>7}{:>6}", "scheme", "bit/s", "band", "PAPR");
     for (name, snr) in &cases {
-        print!("{:>14}", format!("{}@{snr:.0}", bench::short_name(name).replace(":kaukana", ":k").replace("-mac", "")));
+        print!("{:>14}", format!("{}@{snr:.0}", bench::short_name(name).replace(":far", ":f").replace("-mac", "")));
     }
-    println!("{:>10}", "netto min");
+    println!("{:>10}", "net min");
     for s in schemes() {
         let mut row = format!("{:<32}{:>7.0}{:>7.0}", s.name, s.bit_rate(), s.bandwidth());
         let mut papr_db = 0.0;
         let mut worst_net = f64::MAX;
         let mut cells = String::new();
         for (ci, (name, snr)) in cases.iter().enumerate() {
-            let profile = profiles.iter().find(|p| &p.name == name).ok_or("profiili puuttuu")?;
+            let profile = profiles.iter().find(|p| &p.name == name).ok_or("profile missing")?;
             let (mut errors, mut bits) = (0u64, 0u64);
             for seed in 0..seeds {
                 let mut rng = Rng::new(seed * 7919 + 13);
@@ -272,7 +272,7 @@ pub fn cmd_explore(raw: &[String]) -> Result<ExitCode, String> {
                 let rms = modem_core::dsp::rms(&tx);
                 papr_db = 20.0 * (peak / rms).log10();
                 if a.has("clip") {
-                    // Kaiuttimen rajallinen huipputaso: leikataan 6 dB tehollisarvon yläpuolelta.
+                    // Limited peak level of the speaker: clip 6 dB above the RMS level.
                     let lim = rms * 2.0;
                     tx.iter_mut().for_each(|v| *v = v.clamp(-lim, lim));
                 }

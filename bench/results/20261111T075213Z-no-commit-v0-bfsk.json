@@ -1,13 +1,13 @@
 {
   "schema": 1,
-  "commit": "ei-commitia",
+  "commit": "no-commit",
   "time_utc": "20261111T075213Z",
   "phy": "v0-bfsk",
-  "mode": "yksisuuntainen",
+  "mode": "one-way",
   "seeds": 12,
   "summary": {
     "transfer_time_s": 5.54,
-    "transfer_note": "yksi kehys, ei kuittauksia",
+    "transfer_note": "one frame, no acks",
     "success_rate": 0.845238,
     "detect_rate": 0.927083,
     "false_frames": 0,
@@ -18,8 +18,8 @@
   },
   "profiles": [
     {
-      "name": "puhdas",
-      "desc": "ei kaikua, valkoinen kohina",
+      "name": "clean",
+      "desc": "no reverberation, white noise",
       "holdout": false,
       "min_snr_db": -9,
       "points": [
@@ -42,8 +42,8 @@
       ]
     },
     {
-      "name": "huone",
-      "desc": "RT60 0,35 s, DRR 8 dB, valkoinen kohina",
+      "name": "room",
+      "desc": "RT60 0.35 s, DRR 8 dB, white noise",
       "holdout": false,
       "min_snr_db": 21,
       "points": [
@@ -66,8 +66,8 @@
       ]
     },
     {
-      "name": "kaikuisa",
-      "desc": "RT60 0,8 s, DRR 0 dB",
+      "name": "reverberant",
+      "desc": "RT60 0.8 s, DRR 0 dB",
       "holdout": false,
       "min_snr_db": null,
       "points": [
@@ -90,8 +90,8 @@
       ]
     },
     {
-      "name": "huonemelu",
-      "desc": "huone + vaaleanpunainen (matalapainotteinen) kohina",
+      "name": "room-noise",
+      "desc": "room + pink (low-frequency weighted) noise",
       "holdout": false,
       "min_snr_db": 18,
       "points": [
@@ -114,8 +114,8 @@
       ]
     },
     {
-      "name": "kello-44-48",
-      "desc": "lähetin 44,1 kHz, vastaanotin 48 kHz +120 ppm, huone",
+      "name": "clock-44-48",
+      "desc": "transmitter 44.1 kHz, receiver 48 kHz +120 ppm, room",
       "holdout": false,
       "min_snr_db": 27,
       "points": [
@@ -138,8 +138,8 @@
       ]
     },
     {
-      "name": "kello-48-44",
-      "desc": "lähetin 48 kHz, vastaanotin 44,1 kHz -120 ppm, huone",
+      "name": "clock-48-44",
+      "desc": "transmitter 48 kHz, receiver 44.1 kHz -120 ppm, room",
       "holdout": false,
       "min_snr_db": 21,
       "points": [
@@ -162,8 +162,8 @@
       ]
     },
     {
-      "name": "leikkaus",
-      "desc": "mikrofoni leikkaa rajusti (signaalin RMS 0,9), huone",
+      "name": "clipping",
+      "desc": "microphone clips heavily (signal RMS 0.9), room",
       "holdout": false,
       "min_snr_db": -3,
       "points": [
@@ -186,8 +186,8 @@
       ]
     },
     {
-      "name": "vaimea",
-      "desc": "hyvin hiljainen signaali (RMS 0,0005), huone",
+      "name": "faint",
+      "desc": "very faint signal (RMS 0.0005), room",
       "holdout": false,
       "min_snr_db": 0,
       "points": [

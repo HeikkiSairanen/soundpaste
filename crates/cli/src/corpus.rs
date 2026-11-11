@@ -1,24 +1,24 @@
-//! Äänitekorpus: oikeat äänitteet metatietoineen.
+//! Recording corpus: real recordings with their metadata.
 //!
-//! - `corpus/kanava/<id>.wav`: kanavamittaus (pyyhkäisy + taustamelu). Vieressä
-//!   `<id>.json` (metatiedot ja tulokset), `<id>.ir.wav` (impulssivaste) ja
-//!   `<id>.kohina.wav` (taustamelu). Nämä eivät vanhene, kun modulaatio muuttuu.
-//! - `corpus/lahetys/<id>.wav`: äänitetty modeemilähetys ja `<id>.json`, jossa on
-//!   aaltomuodon nimi ja odotettu sisältö. Toimii vastaanottimen regressiotestinä
-//!   niin kauan kuin sama aaltomuoto on olemassa.
+//! - `corpus/channel/<id>.wav`: a channel measurement (sweep + background noise). Next to
+//!   it `<id>.json` (metadata and results), `<id>.ir.wav` (impulse response) and
+//!   `<id>.noise.wav` (background noise). These do not go stale when the modulation changes.
+//! - `corpus/tx/<id>.wav`: a recorded modem transmission and `<id>.json` with the
+//!   waveform name and the expected content. Serves as a receiver regression test
+//!   for as long as the same waveform exists.
 //!
-//! Osa aineistosta merkitään vertailuaineistoksi (`holdout`), jota ei käytetä
-//! virittämiseen: se ajetaan vain erikseen pyydettäessä.
+//! Part of the material is marked as a holdout set (`holdout`) that is not used for
+//! tuning: it is run only when explicitly requested.
 
 use crate::json::Json;
 use modem_core::phy::{PhyEvent, PhyKind};
 use modem_core::wav;
 use std::path::{Path, PathBuf};
 
-pub const CHANNEL_DIR: &str = "corpus/kanava";
-pub const TX_DIR: &str = "corpus/lahetys";
+pub const CHANNEL_DIR: &str = "corpus/channel";
+pub const TX_DIR: &str = "corpus/tx";
 
-/// Joka neljäs äänite päätyy vertailuaineistoon tunnisteen tiivisteen perusteella.
+/// Every fourth recording ends up in the holdout set, based on a hash of its id.
 pub fn auto_holdout(id: &str) -> bool {
     modem_core::crc::crc32(id.as_bytes()) % 4 == 0
 }
@@ -32,7 +32,7 @@ pub fn entries(dir: &str) -> Vec<(PathBuf, Json)> {
         if let Ok(text) = std::fs::read_to_string(&p) {
             match Json::parse(&text) {
                 Ok(j) => out.push((p, j)),
-                Err(e) => eprintln!("varoitus: {}: {e}", p.display()),
+                Err(e) => eprintln!("warning: {}: {e}", p.display()),
             }
         }
     }
@@ -86,10 +86,10 @@ pub fn decode_expect(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeResu
     r
 }
 
-/// Sessioäänite (koko keskustelu yhden aseman mikrofonista): äänite syötetään
-/// tuoreelle asemalle, joka toimii passiivisena vastaanottajana. Sen omat
-/// vastaukset eivät päädy mihinkään, mutta se kokoaa viestin kuulemistaan
-/// kehyksistä samalla koodilla kuin oikea vastaanottaja.
+/// Session recording (the whole exchange from one station's microphone): the recording
+/// is fed to a fresh station that acts as a passive receiver. Its own replies go
+/// nowhere, but it assembles the message from the frames it hears with the same
+/// code as a real receiver.
 pub fn decode_session(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeResult {
     use modem_core::link::{Event, LinkConfig};
     let mut station = modem_core::station::Station::new(kind, w.sample_rate as f64, LinkConfig::default(), 1);
@@ -107,8 +107,8 @@ pub fn decode_session(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeRes
     DecodeResult { ok, detected: st.preambles > 0, snr_db: (st.frames_ok > 0).then_some(st.last_snr_db), corrected: st.corrected }
 }
 
-/// Aja lähetysäänitteet nykyisillä vastaanottimilla. `only`: rajaa yhteen aaltomuotoon.
-/// `verbose`: tulosta rivi per äänite.
+/// Run the transmission recordings through the current receivers. `only`: restrict to one
+/// waveform. `verbose`: print a line per recording.
 pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: bool) -> CorpusScore {
     let mut score = CorpusScore::default();
     for (path, meta) in entries(TX_DIR) {
@@ -117,7 +117,7 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
         let Some(kind) = PhyKind::from_name(phy_name) else {
             score.stale += 1;
             if verbose {
-                println!("  {id:<50} vanhentunut (aaltomuotoa '{phy_name}' ei enää ole)");
+                println!("  {id:<50} stale (waveform '{phy_name}' no longer exists)");
             }
             continue;
         };
@@ -132,11 +132,11 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
         let w = match read_wav(&path.with_extension("wav")) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("varoitus: {e}");
+                eprintln!("warning: {e}");
                 continue;
             }
         };
-        let r = if meta.str_at("kind") == Some("sessio") { decode_session(kind, &w, text.as_bytes()) } else { decode_expect(kind, &w, text.as_bytes()) };
+        let r = if meta.str_at("kind") == Some("session") { decode_session(kind, &w, text.as_bytes()) } else { decode_expect(kind, &w, text.as_bytes()) };
         if holdout {
             score.holdout_n += 1;
             score.holdout_ok += r.ok as u32;
@@ -146,10 +146,10 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
         }
         if verbose {
             println!(
-                "  {id:<50} {:<8} {}{}  voimakkuus {}, SNR {}",
+                "  {id:<50} {:<8} {}{}  gain {}, SNR {}",
                 phy_name,
-                if r.ok { "ok   " } else if r.detected { "VIRHE" } else { "EI HAVAITTU" },
-                if holdout { " (vert.)" } else { "" },
+                if r.ok { "ok   " } else if r.detected { "ERROR" } else { "NOT DETECTED" },
+                if holdout { " (hold.)" } else { "" },
                 meta.num_at("gain").map_or("?".into(), |g| format!("{g:.3}")),
                 r.snr_db.map_or("-".into(), |s| format!("{s:.1} dB")),
             );

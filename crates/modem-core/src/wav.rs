@@ -1,8 +1,8 @@
-//! WAV-tiedostojen (RIFF/WAVE) luku ja kirjoitus ilman kirjastoja.
+//! Reading and writing WAV files (RIFF/WAVE) without libraries.
 //!
-//! Kirjoitus: mono, 16-bittinen PCM tai 32-bittinen float.
-//! Luku: PCM 8/16/24/32 bit ja IEEE float 32/64, mikä tahansa kanavamäärä
-//! (kanavat keskiarvoistetaan monoksi). Tuntemattomat lohkot ohitetaan.
+//! Writing: mono, 16-bit PCM or 32-bit float.
+//! Reading: PCM 8/16/24/32 bit and IEEE float 32/64, any number of channels
+//! (channels are averaged to mono). Unknown chunks are skipped.
 
 use std::fmt;
 
@@ -24,11 +24,11 @@ pub enum WavError {
 impl fmt::Display for WavError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            WavError::NotRiff => write!(f, "ei RIFF/WAVE-tiedosto"),
-            WavError::Truncated => write!(f, "tiedosto katkeaa kesken"),
-            WavError::MissingFmt => write!(f, "fmt-lohko puuttuu"),
-            WavError::MissingData => write!(f, "data-lohko puuttuu"),
-            WavError::Unsupported(s) => write!(f, "muotoa ei tueta: {s}"),
+            WavError::NotRiff => write!(f, "not a RIFF/WAVE file"),
+            WavError::Truncated => write!(f, "file is truncated"),
+            WavError::MissingFmt => write!(f, "fmt chunk missing"),
+            WavError::MissingData => write!(f, "data chunk missing"),
+            WavError::Unsupported(s) => write!(f, "unsupported format: {s}"),
         }
     }
 }
@@ -58,24 +58,24 @@ pub fn decode(bytes: &[u8]) -> Result<Wav, WavError> {
             let channels = u16le(bytes, body + 2);
             let rate = u32le(bytes, body + 4);
             let bits = u16le(bytes, body + 14);
-            // WAVE_FORMAT_EXTENSIBLE: varsinainen muoto on alimuodon GUID:n alussa.
+            // WAVE_FORMAT_EXTENSIBLE: the actual format is at the start of the subformat GUID.
             if format == 0xFFFE && size >= 40 && body + 26 <= bytes.len() {
                 format = u16le(bytes, body + 24);
             }
             fmt = Some((format, channels, rate, bits));
         } else if id == b"data" {
             let (format, channels, rate, bits) = fmt.ok_or(WavError::MissingFmt)?;
-            // Suoratoistona kirjoitetuissa tiedostoissa (esim. sox putkeen) koko voi olla
-            // 0 tai 0xFFFFFFFF; luetaan silloin tiedoston loppuun.
+            // In files written as a stream (e.g. sox into a pipe) the size can be
+            // 0 or 0xFFFFFFFF; in that case read to the end of the file.
             let end = if size == 0 || body + size > bytes.len() { bytes.len() } else { body + size };
             let data = &bytes[body..end];
             if channels == 0 {
-                return Err(WavError::Unsupported("0 kanavaa".into()));
+                return Err(WavError::Unsupported("0 channels".into()));
             }
             let bps = (bits / 8) as usize;
             let frame = bps * channels as usize;
             if frame == 0 {
-                return Err(WavError::Unsupported("0-bittinen näyte".into()));
+                return Err(WavError::Unsupported("0-bit sample".into()));
             }
             let conv: fn(&[u8]) -> f32 = match (format, bits) {
                 (1, 8) => |b| (b[0] as f32 - 128.0) / 128.0,
@@ -126,7 +126,7 @@ fn header(sample_rate: u32, format: u16, bits: u16, data_len: u32) -> Vec<u8> {
     out
 }
 
-/// Mono, 16-bittinen PCM. Arvot leikataan välille [-1, 1].
+/// Mono, 16-bit PCM. Values are clipped to [-1, 1].
 pub fn encode_pcm16(sample_rate: u32, samples: &[f32]) -> Vec<u8> {
     let mut out = header(sample_rate, 1, 16, (samples.len() * 2) as u32);
     for &s in samples {
@@ -136,7 +136,7 @@ pub fn encode_pcm16(sample_rate: u32, samples: &[f32]) -> Vec<u8> {
     out
 }
 
-/// Mono, 32-bittinen float. Häviötön, sopii mittauksiin.
+/// Mono, 32-bit float. Lossless, suitable for measurements.
 pub fn encode_f32(sample_rate: u32, samples: &[f32]) -> Vec<u8> {
     let mut out = header(sample_rate, 3, 32, (samples.len() * 4) as u32);
     for &s in samples {
@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn stereo_is_downmixed_and_unknown_chunks_skipped() {
-        // Käsin rakennettu stereo-PCM16, jossa LIST-lohko ennen dataa.
+        // Hand-built stereo PCM16 with a LIST chunk before the data.
         let mut b = Vec::new();
         b.extend_from_slice(b"RIFF\0\0\0\0WAVEfmt ");
         b.extend_from_slice(&16u32.to_le_bytes());
@@ -181,7 +181,7 @@ mod tests {
         b.extend_from_slice(&16u16.to_le_bytes());
         b.extend_from_slice(b"LIST");
         b.extend_from_slice(&3u32.to_le_bytes());
-        b.extend_from_slice(&[1, 2, 3, 0]); // pariton koko + täytetavu
+        b.extend_from_slice(&[1, 2, 3, 0]); // odd size + pad byte
         b.extend_from_slice(b"data");
         b.extend_from_slice(&8u32.to_le_bytes());
         for v in [16384i16, 0, -16384, -16384] {

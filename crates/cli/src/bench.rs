@@ -1,13 +1,13 @@
-//! Mittausajo simuloidun kanavan läpi ja pistetaulu.
+//! Bench run through a simulated channel, and the scoreboard.
 //!
-//! Sama pistetaulu tuotetaan jokaisesta ajosta, jotta muutoksia voi verrata:
-//! - siirtoaika: 60 merkin linkin siirto (kuittauksineen, kun linkkikerros on käytössä)
-//! - onnistuminen: osuus siirroista nimellisoloissa (kaikki profiilit, SNR 12–30 dB)
-//! - alin SNR: pienin signaali-kohinasuhde, jolla ja jonka yläpuolella vähintään 90 % onnistuu
-//! - BER ennen virheenkorjausta ja korjattujen symbolien määrä: marginaali
-//! - nettonopeus: hyötytavua sekunnissa
+//! Every run produces the same scoreboard so that changes can be compared:
+//! - transfer time: transferring a 60-character link (with acks when the link layer is in use)
+//! - success rate: share of transfers in nominal conditions (all profiles, SNR 12–30 dB)
+//! - min SNR: the lowest signal-to-noise ratio at and above which at least 90 % succeed
+//! - BER before error correction and the number of corrected symbols: margin
+//! - net rate: payload bytes per second
 //!
-//! Siemenluvut ovat kiinteät, joten sama koodi tuottaa aina saman tuloksen.
+//! Seeds are fixed, so the same code always produces the same result.
 
 use crate::corpus::{self, CorpusScore};
 use crate::json::Json;
@@ -17,7 +17,7 @@ use modem_core::sim::{run_oneway, synth_ir, Interference, InterferenceKind, Nois
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-/// Mittausviesti: 60 merkin linkki.
+/// Bench message: a 60-character link.
 pub const LINK60: &str = "https://sairanen.org/soundpaste/?v=Zk3mQ9xT7bLw2RfN8cYh5VpJd";
 
 pub const SNR_GRID: &[f64] = &[-15.0, -12.0, -9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0, 21.0, 24.0, 27.0, 30.0];
@@ -27,7 +27,7 @@ const SUCCESS_LIMIT: f64 = 0.9;
 pub struct Profile {
     pub name: String,
     pub desc: String,
-    /// Onko profiili pidetty sivussa virittämisestä (vertailuaineisto)?
+    /// Is the profile kept out of tuning (holdout set)?
     pub holdout: bool,
     pub make: Box<dyn Fn(f64, u64) -> OneWay + Send + Sync>,
 }
@@ -36,8 +36,8 @@ fn room(fs_rx: f64, rt60: f64, drr: f64, seed: u64) -> Vec<f32> {
     synth_ir(fs_rx, rt60, drr, seed)
 }
 
-/// Synteettiset kanavaprofiilit. Jokaisella siemenellä on oma huoneensa
-/// (impulssivasteen satunnaisosa), jotta modeemia ei viritetä yhteen kaikuun.
+/// Synthetic channel profiles. Each seed has its own room (the random part of the
+/// impulse response), so that the modem is not tuned to a single echo.
 pub fn synthetic_profiles() -> Vec<Profile> {
     fn p(name: &str, desc: &str, make: impl Fn(f64, u64) -> OneWay + Send + Sync + 'static) -> Profile {
         Profile { name: name.into(), desc: desc.into(), holdout: false, make: Box::new(make) }
@@ -50,55 +50,55 @@ pub fn synthetic_profiles() -> Vec<Profile> {
         c
     };
     vec![
-        p("puhdas", "ei kaikua, valkoinen kohina", move |snr, seed| base(snr, seed)),
-        p("huone", "RT60 0,35 s, DRR 8 dB, valkoinen kohina", move |snr, seed| {
+        p("clean", "no reverb, white noise", move |snr, seed| base(snr, seed)),
+        p("room", "RT60 0.35 s, DRR 8 dB, white noise", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             c
         }),
-        p("kaikuisa", "RT60 0,8 s, DRR 0 dB", move |snr, seed| {
+        p("reverberant", "RT60 0.8 s, DRR 0 dB", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.8, 0.0, seed);
             c
         }),
-        p("halli", "RT60 1,2 s, DRR -5 dB: kaiku selvästi suoraa ääntä voimakkaampi", move |snr, seed| {
+        p("hall", "RT60 1.2 s, DRR -5 dB: reverb clearly louder than the direct sound", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 1.2, -5.0, seed);
             c
         }),
-        p("huonemelu", "huone + vaaleanpunainen (matalapainotteinen) kohina", move |snr, seed| {
+        p("room-noise", "room + pink (low-frequency weighted) noise", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             c.noise = NoiseKind::Pink;
             c
         }),
-        p("kello-44-48", "lähetin 44,1 kHz, vastaanotin 48 kHz +120 ppm, huone", move |snr, seed| {
+        p("clock-44-48", "transmitter 44.1 kHz, receiver 48 kHz +120 ppm, room", move |snr, seed| {
             let mut c = base(snr, seed);
             c.fs_tx = 44100.0;
             c.clock_ppm = 120.0;
             c.ir = room(48000.0, 0.35, 8.0, seed);
             c
         }),
-        p("kello-48-44", "lähetin 48 kHz, vastaanotin 44,1 kHz -120 ppm, huone", move |snr, seed| {
+        p("clock-48-44", "transmitter 48 kHz, receiver 44.1 kHz -120 ppm, room", move |snr, seed| {
             let mut c = base(snr, seed);
             c.fs_rx = 44100.0;
             c.clock_ppm = -120.0;
             c.ir = room(44100.0, 0.35, 8.0, seed);
             c
         }),
-        p("leikkaus", "mikrofoni leikkaa rajusti (signaalin RMS 0,9), huone", move |snr, seed| {
+        p("clipping", "microphone clips heavily (signal RMS 0.9), room", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             c.rx_level = 0.9;
             c
         }),
-        p("vaimea", "hyvin hiljainen signaali (RMS 0,0005), huone", move |snr, seed| {
+        p("faint", "very quiet signal (RMS 0.0005), room", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             c.rx_level = 0.0005;
             c
         }),
-        p("kolahdus", "huone + kolme kolahdusta kehyksen aikana (huippu 14 dB signaalia voimakkaampi)", move |snr, seed| {
+        p("thump", "room + three thumps during the frame (peak 14 dB above the signal)", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             let mut rng = Rng::new(seed ^ 0xC11C);
@@ -107,7 +107,7 @@ pub fn synthetic_profiles() -> Vec<Profile> {
                 .collect();
             c
         }),
-        p("puhe", "huone + 0,5 s puheen kaltaista häiriötä kehyksen aikana (6 dB signaalia voimakkaampi)", move |snr, seed| {
+        p("speech", "room + 0.5 s of speech-like interference during the frame (6 dB above the signal)", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             let mut rng = Rng::new(seed ^ 0x5BEE);
@@ -117,13 +117,14 @@ pub fn synthetic_profiles() -> Vec<Profile> {
     ]
 }
 
-/// Mitatut kanavat korpuksesta. Jokaisesta mittauksesta tulee kaksi profiilia:
-/// - `mitattu:<id>`: impulssivaste ja taustamelu sellaisenaan
-/// - `mitattu:<id>:kaukana`: sama, mutta suoraa ääntä vaimennettu 14 dB. Kun
-///   kaiutin ja mikrofoni ovat samassa koneessa, suora ääni on paljon kaikua
-///   voimakkaampi kuin toiselle koneelle metrin päähän. Kaikukenttä on huoneessa
-///   suunnilleen sama kaikkialla, joten suoran äänen vaimentaminen arvioi
-///   kauempana olevaa vastaanottajaa. Tämä on johdettu arvio, ei mittaus.
+/// Measured channels from the corpus. Each measurement yields two profiles:
+/// - `measured:<id>`: the impulse response and background noise as they are
+/// - `measured:<id>:far`: the same, but with the direct sound attenuated by 14 dB.
+///   When the speaker and microphone are in the same machine, the direct sound is
+///   much louder relative to the reverb than it would be for another machine a metre
+///   away. The reverberant field is roughly the same everywhere in a room, so
+///   attenuating the direct sound approximates a receiver further away. This is a
+///   derived estimate, not a measurement.
 pub fn measured_profiles(include_holdout: bool) -> Vec<Profile> {
     let mut out = Vec::new();
     for (path, meta) in corpus::entries(corpus::CHANNEL_DIR) {
@@ -133,8 +134,8 @@ pub fn measured_profiles(include_holdout: bool) -> Vec<Profile> {
         }
         let id = meta.str_at("id").unwrap_or("?").to_string();
         let base = path.with_extension("");
-        let (Ok(ir), Ok(noise)) = (corpus::read_wav(&base.with_extension("ir.wav")), corpus::read_wav(&base.with_extension("kohina.wav"))) else {
-            eprintln!("varoitus: kanavalta {id} puuttuu ir.wav tai kohina.wav");
+        let (Ok(ir), Ok(noise)) = (corpus::read_wav(&base.with_extension("ir.wav")), corpus::read_wav(&base.with_extension("noise.wav"))) else {
+            eprintln!("warning: channel {id} is missing ir.wav or noise.wav");
             continue;
         };
         let fs = ir.sample_rate as f64;
@@ -150,8 +151,8 @@ pub fn measured_profiles(include_holdout: bool) -> Vec<Profile> {
             }
             let noise = noise.clone();
             out.push(Profile {
-                name: format!("mitattu:{id}{}", if far { ":kaukana" } else { "" }),
-                desc: format!("mitattu kanava ja taustamelu{} {note}", if far { ", suora ääni -14 dB (johdettu)" } else { "" }),
+                name: format!("measured:{id}{}", if far { ":far" } else { "" }),
+                desc: format!("measured channel and background noise{} {note}", if far { ", direct sound -14 dB (derived)" } else { "" }),
                 holdout,
                 make: Box::new(move |snr, seed| {
                     let mut rng = Rng::new(seed ^ 0xC0FFEE);
@@ -175,14 +176,14 @@ pub struct Point {
     pub n: u32,
     pub ok: u32,
     pub detected: u32,
-    /// Ehjänä läpi mennyt kehys, jonka sisältö oli väärä (ei saisi tapahtua).
+    /// A frame that passed as intact but had the wrong content (must not happen).
     pub false_frames: u32,
     pub bit_errors: u64,
     pub bits: u64,
     pub corrected: u64,
-    /// Onnistuneiden sessioiden kestot (ms), vain sessiotilassa.
+    /// Durations of successful sessions (ms), session mode only.
     pub times: Vec<u32>,
-    /// Lähetetyt datakehykset ja POLL-kehykset (uudelleenlähetysten mittari), vain sessiotilassa.
+    /// Data frames and POLL frames sent (a measure of retransmissions), session mode only.
     pub frames_sent: u64,
 }
 
@@ -214,7 +215,7 @@ pub struct ProfileResult {
 }
 
 impl ProfileResult {
-    /// Pienin SNR, jolla ja jonka yläpuolella onnistumisosuus on vähintään raja.
+    /// The lowest SNR at and above which the success rate is at least the limit.
     pub fn min_snr(&self) -> Option<f64> {
         let mut best = None;
         for p in self.points.iter().rev() {
@@ -228,7 +229,7 @@ impl ProfileResult {
     }
 }
 
-/// Yksi yksisuuntainen siirto: moduloi, vie kanavan läpi, pura.
+/// One one-way transfer: modulate, pass through the channel, demodulate.
 pub fn run_once(kind: PhyKind, cfg: &OneWay, payload: &[u8], seed: u64) -> Point {
     let modulator = kind.modulator(cfg.fs_tx);
     let tx = modulator.modulate(payload);
@@ -236,7 +237,7 @@ pub fn run_once(kind: PhyKind, cfg: &OneWay, payload: &[u8], seed: u64) -> Point
     let rx = run_oneway(&tx, cfg, seed);
     let mut demod = kind.demodulator(cfg.fs_rx);
     let mut events = Vec::new();
-    // Syötetään vaihtelevan kokoisina lohkoina, kuten oikea äänilaite tekisi.
+    // Feed in blocks of varying size, as a real audio device would.
     let mut rng = Rng::new(seed ^ 0xB10C);
     let mut pos = 0;
     while pos < rx.len() {
@@ -285,7 +286,7 @@ pub fn run_profiles(opts: &BenchOptions, profiles: &[Profile]) -> Vec<ProfileRes
     run_grid(opts, profiles, SNR_GRID, &|cfg, seed| run_once(kind, cfg, payload, seed))
 }
 
-/// Aja `job` jokaiselle (profiili, SNR, toisto) -yhdistelmälle rinnakkain.
+/// Run `job` for every (profile, SNR, repetition) combination in parallel.
 pub fn run_grid(opts: &BenchOptions, profiles: &[Profile], grid: &[f64], job: &(dyn Fn(&OneWay, u64) -> Point + Sync)) -> Vec<ProfileResult> {
     let jobs: Vec<(usize, usize, u32)> = (0..profiles.len())
         .flat_map(|p| (0..grid.len()).flat_map(move |s| (0..opts.seeds).map(move |i| (p, s, i))))
@@ -299,8 +300,8 @@ pub fn run_grid(opts: &BenchOptions, profiles: &[Profile], grid: &[f64], job: &(
             scope.spawn(|| loop {
                 let j = next.fetch_add(1, Ordering::Relaxed);
                 let Some(&(p, s, i)) = jobs.get(j) else { break };
-                // Siemen riippuu vain profiilin nimestä, SNR-arvosta ja toistosta,
-                // joten sama kanava toistuu eri modeemiversioilla.
+                // The seed depends only on the profile name, the SNR value and the repetition,
+                // so the same channel recurs across modem versions.
                 let name_hash = profiles[p].name.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
                 let snr_index = SNR_GRID.iter().position(|&x| x == grid[s]).unwrap_or(s + 100);
                 let seed = name_hash ^ ((snr_index as u64) << 32) ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9);
@@ -333,7 +334,7 @@ pub struct Scoreboard {
     pub corrected_per_frame: f64,
     pub net_rate: f64,
     pub corpus: CorpusScore,
-    /// Datakehyksiä ja kuittauspyyntöjä per sessio nimellisoloissa (1,0 = ei uudelleenlähetyksiä).
+    /// Data frames and ack requests per session in nominal conditions (1.0 = no retransmissions).
     pub frames_per_session: Option<f64>,
     pub profiles: Vec<ProfileResult>,
 }
@@ -345,7 +346,7 @@ impl Scoreboard {
         for pr in &profiles {
             for pt in &pr.points {
                 all_false += pt.false_frames;
-                // Vertailuaineisto ei vaikuta otsikkolukuihin.
+                // The holdout set does not affect the headline figures.
                 if pt.snr_db >= NOMINAL_MIN_SNR && !pr.holdout {
                     nominal.add(pt);
                 }
@@ -354,12 +355,12 @@ impl Scoreboard {
         let t = kind.modulator(48000.0).duration(LINK60.len());
         Scoreboard {
             phy: kind.name().into(),
-            mode: "yksisuuntainen".into(),
+            mode: "one-way".into(),
             commit: git_commit(),
             time_utc: utc_now(),
             seeds,
             transfer_time_s: t,
-            transfer_note: "yksi kehys, ei kuittauksia".into(),
+            transfer_note: "one frame, no acks".into(),
             success_rate: nominal.success(),
             detect_rate: nominal.detected as f64 / nominal.n.max(1) as f64,
             false_frames: all_false,
@@ -372,8 +373,8 @@ impl Scoreboard {
         }
     }
 
-    /// Sessiotilan pistetaulu: siirtoaika ja onnistuminen koko protokollalla
-    /// (kaksi asemaa, kuittaukset), marginaaliluvut yksisuuntaisesta ajosta.
+    /// Session-mode scoreboard: transfer time and success with the whole protocol
+    /// (two stations, acks), margin figures from the one-way run.
     pub fn session(kind: PhyKind, seeds: u32, link_desc: &str, profiles: Vec<ProfileResult>, phy_only: &Scoreboard, corpus: CorpusScore) -> Scoreboard {
         let mut nominal = Point::default();
         for pr in profiles.iter().filter(|p| !p.holdout) {
@@ -385,12 +386,12 @@ impl Scoreboard {
         let median = nominal.times.get(nominal.times.len() / 2).map_or(f64::NAN, |&ms| ms as f64 / 1000.0);
         Scoreboard {
             phy: kind.name().into(),
-            mode: format!("sessio: {link_desc}"),
+            mode: format!("session: {link_desc}"),
             commit: git_commit(),
             time_utc: utc_now(),
             seeds,
             transfer_time_s: median,
-            transfer_note: "Lähetä-napista Perillä-ilmoitukseen, mediaani nimellisoloissa".into(),
+            transfer_note: "from pressing Send to the Delivered notice, median in nominal conditions".into(),
             success_rate: nominal.success(),
             detect_rate: phy_only.detect_rate,
             false_frames: phy_only.false_frames,
@@ -407,7 +408,7 @@ impl Scoreboard {
         self.profiles.iter().find(|p| p.name == name).and_then(|p| p.min_snr())
     }
 
-    /// Heikoin profiili: suurin alin SNR (tai profiili, joka ei yllä rajaan lainkaan).
+    /// Worst profile: the highest min SNR (or a profile that never reaches the limit).
     pub fn worst(&self) -> Option<(&str, Option<f64>)> {
         self.profiles
             .iter()
@@ -432,7 +433,7 @@ impl Scoreboard {
                     ("success_rate", Json::num(self.success_rate)),
                     ("detect_rate", Json::num(self.detect_rate)),
                     ("false_frames", Json::num(self.false_frames)),
-                    ("min_snr_db_room", Json::opt(self.min_snr("huone"))),
+                    ("min_snr_db_room", Json::opt(self.min_snr("room"))),
                     ("ber_pre_fec", Json::opt(self.ber)),
                     ("corrected_per_frame", Json::num(self.corrected_per_frame)),
                     ("net_bytes_per_s", Json::num(self.net_rate)),
@@ -487,40 +488,40 @@ impl Scoreboard {
     }
 
     pub fn print(&self) {
-        let snr = |v: Option<f64>| v.map_or("ei yllä".to_string(), |x| format!("{x:+.0} dB"));
-        println!("PISTETAULU  {}  ({})  commit {}  {} toistoa/piste", self.phy, self.mode, self.commit, self.seeds);
-        println!("  Siirtoaika, 60 merkin linkki      {:>8.2} s   ({})", self.transfer_time_s, self.transfer_note);
-        println!("  Onnistuminen, nimellisolot        {:>8.1} %   (kaikki profiilit, SNR >= {NOMINAL_MIN_SNR:.0} dB)", self.success_rate * 100.0);
-        println!("  Alin SNR (>= 90 %), huone         {:>10}", snr(self.min_snr("huone")));
+        let snr = |v: Option<f64>| v.map_or("not reached".to_string(), |x| format!("{x:+.0} dB"));
+        println!("SCOREBOARD  {}  ({})  commit {}  {} runs/point", self.phy, self.mode, self.commit, self.seeds);
+        println!("  Transfer time, 60-char link       {:>8.2} s   ({})", self.transfer_time_s, self.transfer_note);
+        println!("  Success rate, nominal conditions  {:>8.1} %   (all profiles, SNR >= {NOMINAL_MIN_SNR:.0} dB)", self.success_rate * 100.0);
+        println!("  Min SNR (>= 90 %), room           {:>10}", snr(self.min_snr("room")));
         if let Some((name, v)) = self.worst() {
-            println!("  Alin SNR, heikoin profiili        {:>10}   ({name})", snr(v));
+            println!("  Min SNR, worst profile            {:>10}   ({name})", snr(v));
         }
-        println!("  BER ennen virheenkorjausta        {:>10}   (nimellisolot, havaitut kehykset)", self.ber.map_or("-".into(), |b| format!("{b:.1e}")));
-        println!("  Korjatut symbolit / kehys         {:>8.2}", self.corrected_per_frame);
-        println!("  Nettonopeus                       {:>8.1} tavua/s", self.net_rate);
-        println!("  Alkumerkki havaittu               {:>8.1} %", self.detect_rate * 100.0);
+        println!("  BER before error correction       {:>10}   (nominal conditions, detected frames)", self.ber.map_or("-".into(), |b| format!("{b:.1e}")));
+        println!("  Corrected symbols / frame         {:>8.2}", self.corrected_per_frame);
+        println!("  Net rate                          {:>8.1} bytes/s", self.net_rate);
+        println!("  Preamble detected                 {:>8.1} %", self.detect_rate * 100.0);
         if let Some(f) = self.frames_per_session {
-            println!("  Datakehyksiä + pyyntöjä / sessio  {:>8.2}     (1,00 = ei uudelleenlähetyksiä)", f);
+            println!("  Data frames + polls / session     {:>8.2}     (1.00 = no retransmissions)", f);
         }
         if self.corpus.n + self.corpus.stale > 0 {
-            println!("  Äänitekorpus (oikea ääni)         {:>5}/{:<3}    ehjänä purettua äänitettä", self.corpus.ok, self.corpus.n);
+            println!("  Recording corpus (real audio)     {:>5}/{:<3}    recordings decoded intact", self.corpus.ok, self.corpus.n);
         } else {
-            println!("  Äänitekorpus (oikea ääni)                -   (ei äänitteitä tälle aaltomuodolle)");
+            println!("  Recording corpus (real audio)            -   (no recordings for this waveform)");
         }
         if self.corpus.holdout_n > 0 {
-            println!("  Vertailuaineisto                  {:>5}/{:<3}", self.corpus.holdout_ok, self.corpus.holdout_n);
+            println!("  Holdout set                       {:>5}/{:<3}", self.corpus.holdout_ok, self.corpus.holdout_n);
         }
         if self.false_frames > 0 {
-            println!("  VÄÄRIÄ KEHYKSIÄ LÄPI              {:>8}   (tarkistussumma petti!)", self.false_frames);
+            println!("  FALSE FRAMES PASSED               {:>8}   (the checksum failed us!)", self.false_frames);
         }
         println!();
-        print!("  onnistuminen %      SNR dB:");
+        print!("  success %           SNR dB:");
         for pt in self.profiles.first().map(|p| p.points.as_slice()).unwrap_or(&[]) {
             print!("{:>4.0}", pt.snr_db);
         }
-        println!("   alin SNR");
+        println!("   min SNR");
         for p in &self.profiles {
-            let label = format!("{}{}", short_name(&p.name), if p.holdout { " (vert.)" } else { "" });
+            let label = format!("{}{}", short_name(&p.name), if p.holdout { " (hold.)" } else { "" });
             print!("  {label:<26}");
             for pt in &p.points {
                 print!("{:>4.0}", pt.success() * 100.0);
@@ -530,10 +531,10 @@ impl Scoreboard {
     }
 }
 
-/// Mitatun kanavan lyhyt nimi taulukkoon: `mitattu:20261111T080523Z-mac-g100:kaukana`
-/// -> `m:0805-mac-g100:kaukana` (kellonaika riittää erottamaan saman päivän mittaukset).
+/// Short name of a measured channel for the table: `measured:20261111T080523Z-mac-g100:far`
+/// -> `m:0805-mac-g100:far` (the time of day is enough to tell apart same-day measurements).
 pub fn short_name(name: &str) -> String {
-    match name.strip_prefix("mitattu:") {
+    match name.strip_prefix("measured:") {
         Some(rest) if rest.len() > 17 && rest.as_bytes()[8] == b'T' && rest.as_bytes()[15] == b'Z' => format!("m:{}{}", &rest[9..13], &rest[16..]),
         Some(rest) => format!("m:{rest}"),
         None => name.to_string(),
@@ -544,10 +545,10 @@ pub fn git_commit() -> String {
     let run = |args: &[&str]| {
         std::process::Command::new("git").args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
-    let head = run(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "ei-commitia".into());
+    let head = run(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "no-commit".into());
     let dirty = run(&["status", "--porcelain", "--untracked-files=no"]).map_or(false, |s| !s.is_empty());
     if dirty {
-        format!("{head}+muutoksia")
+        format!("{head}+dirty")
     } else {
         head
     }
@@ -559,7 +560,7 @@ pub fn utc_now() -> String {
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "tuntematon".into())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 #[cfg(test)]

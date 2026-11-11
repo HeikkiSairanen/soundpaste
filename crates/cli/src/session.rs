@@ -1,5 +1,5 @@
-//! Kaksisuuntainen sessio simulaattorissa: mittausajon sessiotila ja yksittäisen
-//! session ajo vianetsintää varten.
+//! Two-way session in the simulator: the bench run's session mode, and running a
+//! single session for debugging.
 
 use crate::args::Args;
 use crate::bench::{self, Point, Profile};
@@ -9,17 +9,17 @@ use modem_core::rng::Rng;
 use modem_core::sim::{synth_ir, Duplex, DuplexConfig, OneWay, Side};
 use std::process::ExitCode;
 
-/// Sessiotilan SNR-ruudukko (harvempi kuin yksisuuntaisessa ajossa, koska
-/// sessio on kymmenen kertaa raskaampi simuloida).
+/// SNR grid for session mode (sparser than in the one-way run, because a
+/// session is ten times heavier to simulate).
 pub const SESSION_GRID: &[f64] = &[-9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 12.0, 18.0, 24.0, 30.0];
 
-/// Rakenna kahden aseman huone yksisuuntaisen profiilin pohjalta.
+/// Build a two-station room from a one-way profile.
 ///
-/// - A lähettää profiilin lähetintaajuudella, B vastaanottaa vastaanotintaajuudella.
-/// - Kumpaankin suuntaan on oma huonevasteensa (sama profiili, eri siemen).
-/// - Kumpikin kuulee oman kaiuttimensa neljä kertaa voimakkaampana kuin toisen.
-/// - Ääniviiveet arvotaan: lähtö 20–250 ms, tulo 10–150 ms.
-/// - Profiilin häiriöt (kolahdus, puhe) osuvat B:n mikrofoniin datakehyksen aikaan.
+/// - A transmits at the profile's transmitter rate, B receives at the receiver rate.
+/// - Each direction has its own room response (same profile, different seed).
+/// - Each station hears its own speaker four times louder than the other's.
+/// - Audio latencies are drawn at random: output 20–250 ms, input 10–150 ms.
+/// - The profile's interference (thump, speech) hits B's microphone during the data frame.
 pub fn duplex_config(kind: PhyKind, profile: &Profile, base: &OneWay, snr_db: f64, seed: u64, link: &LinkConfig) -> DuplexConfig {
     let mut rng = Rng::new(seed ^ 0xD0_91E5);
     let back = (profile.make)(snr_db, seed ^ 0x5A5A_1234);
@@ -37,14 +37,14 @@ pub fn duplex_config(kind: PhyKind, profile: &Profile, base: &OneWay, snr_db: f6
         interference,
         link: link.clone(),
     };
-    // Häiriöt siirretään yksisuuntaisen ajon aikajanalta session datakehyksen kohdalle.
+    // Interference is moved from the one-way run's timeline to the session's data frame.
     let interference = base
         .interference
         .iter()
         .map(|i| modem_core::sim::Interference { start_s: 2.3 + (i.start_s - base.lead_s), ..*i })
         .collect();
-    // Paluusuunnan vaste on laskettu B:n taajuudelle; jos A:n taajuus eroaa, huone
-    // venyy ajassa muutaman prosentin, millä ei ole tässä merkitystä.
+    // The return-direction response is computed for B's rate; if A's rate differs, the room
+    // stretches in time by a few percent, which does not matter here.
     let a = side(base.fs_tx, &back.ir, Vec::new());
     let b = side(base.fs_rx, &base.ir, interference);
     DuplexConfig { kind, sides: [a, b], clock_ppm: base.clock_ppm, seed }
@@ -57,12 +57,12 @@ pub struct SessionOutcome {
     pub duplex: Duplex,
 }
 
-/// Yksi sessio: A lähettää viestin B:lle. Onnistuminen vaatii, että A sai
-/// vahvistuksen ja B näytti täsmälleen oikean viestin täsmälleen kerran.
+/// One session: A sends a message to B. Success requires that A got the
+/// confirmation and B showed exactly the right message exactly once.
 pub fn run_session(cfg: &DuplexConfig, msg: &[u8]) -> SessionOutcome {
     let mut d = Duplex::new(cfg);
     d.run(0.5);
-    d.stations[0].send(msg).expect("lähetys ei alkanut");
+    d.stations[0].send(msg).expect("send did not start");
     d.run_until(90.0, |d| d.settled(0));
     d.run(0.3);
     let elapsed_ms = d.delivered_ms(0);
@@ -89,17 +89,17 @@ pub fn session_point(kind: PhyKind, profile: &Profile, base: &OneWay, snr_db: f6
 
 pub fn link_config(a: &Args) -> Result<(LinkConfig, String), String> {
     let cfg = LinkConfig { burst: a.num("burst", 0)?, inline_start: !a.has("handshake"), ..LinkConfig::default() };
-    let desc = format!("{}{}", if cfg.burst == 0 { "ryöppy".to_string() } else { format!("{} kehystä/kuittaus", cfg.burst) }, if cfg.inline_start { ", pikalähetys" } else { ", aina kättely" });
+    let desc = format!("{}{}", if cfg.burst == 0 { "burst".to_string() } else { format!("{} frames/ack", cfg.burst) }, if cfg.inline_start { ", inline start" } else { ", always handshake" });
     Ok((cfg, desc))
 }
 
-/// `soundpaste session`: aja yksi sessio ja tulosta tapahtumat aikaleimoineen.
+/// `soundpaste session`: run one session and print the events with timestamps.
 pub fn cmd_session(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &["handshake", "quiet"])?;
     let kind = crate::phy_arg(&a)?;
     let snr: f64 = a.num("snr", 20.0)?;
     let seed: u64 = a.num("seed", 1)?;
-    let name = a.str_or("profile", "huone");
+    let name = a.str_or("profile", "room");
     let len: usize = a.num("len", 0)?;
     let text: Vec<u8> = match a.positional.first() {
         Some(t) => t.as_bytes().to_vec(),
@@ -109,12 +109,12 @@ pub fn cmd_session(raw: &[String]) -> Result<ExitCode, String> {
     let (link, desc) = link_config(&a)?;
     let mut profiles = bench::synthetic_profiles();
     profiles.extend(bench::measured_profiles(true));
-    let profile = profiles.iter().find(|p| p.name == name).ok_or_else(|| format!("tuntematon profiili '{name}'"))?;
+    let profile = profiles.iter().find(|p| p.name == name).ok_or_else(|| format!("unknown profile '{name}'"))?;
     let base = (profile.make)(snr, seed);
     let cfg = duplex_config(kind, profile, &base, snr, seed, &link);
-    println!("SESSIO {} ({desc}), profiili {name}, SNR {snr} dB, siemen {seed}, viesti {} tavua", kind.name(), text.len());
+    println!("SESSION {} ({desc}), profile {name}, SNR {snr} dB, seed {seed}, message {} bytes", kind.name(), text.len());
     for (i, s) in cfg.sides.iter().enumerate() {
-        println!("  asema {}: {} Hz, lähtöviive {:.0} ms, tuloviive {:.0} ms", ["A", "B"][i], s.fs, s.out_latency_s * 1e3, s.in_latency_s * 1e3);
+        println!("  station {}: {} Hz, output latency {:.0} ms, input latency {:.0} ms", ["A", "B"][i], s.fs, s.out_latency_s * 1e3, s.in_latency_s * 1e3);
     }
     let mut d = Duplex::new(&cfg);
     let mut printed = [0usize; 2];
@@ -130,7 +130,7 @@ pub fn cmd_session(raw: &[String]) -> Result<ExitCode, String> {
                 if !a.has("quiet") || !matches!(e, Event::Log(_)) {
                     let line = match e {
                         Event::Log(s) => s.clone(),
-                        Event::Received { data, .. } => format!("VASTAANOTETTU: {}", String::from_utf8_lossy(data)),
+                        Event::Received { data, .. } => format!("RECEIVED: {}", String::from_utf8_lossy(data)),
                         other => format!("{other:?}"),
                     };
                     println!("{:7.2} s  {}  {line}", d.time_s(), ["A", "B"][i]);
@@ -145,12 +145,12 @@ pub fn cmd_session(raw: &[String]) -> Result<ExitCode, String> {
     }
     let ok = d.delivered_ms(0).is_some() && d.received(1) == vec![text.clone()];
     println!("{}", match d.delivered_ms(0) {
-        Some(ms) if ok => format!("PERILLÄ {:.2} s", ms as f64 / 1000.0),
-        _ => "EPÄONNISTUI".to_string(),
+        Some(ms) if ok => format!("DELIVERED {:.2} s", ms as f64 / 1000.0),
+        _ => "FAILED".to_string(),
     });
     for i in 0..2 {
         let s = d.stations[i].stats();
-        println!("  asema {}: alkumerkkejä {}, ehjiä kehyksiä {}, hylättyjä {}, lähetettyjä {}, korjattuja tavuja {}", ["A", "B"][i], s.preambles, s.frames_ok, s.frames_failed, s.frames_sent, s.corrected);
+        println!("  station {}: preambles {}, intact frames {}, rejected {}, sent {}, corrected bytes {}", ["A", "B"][i], s.preambles, s.frames_ok, s.frames_failed, s.frames_sent, s.corrected);
     }
     Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(1) })
 }

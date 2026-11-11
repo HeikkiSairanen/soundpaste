@@ -1,31 +1,31 @@
-//! WebAssembly-kääre.
+//! WebAssembly wrapper.
 //!
-//! Selain näkee muutaman C-funktion (`#[no_mangle] extern "C"`) ja wasm-muistin.
-//! Ei wasm-bindgeniä: JavaScript-liima (web/worklet.js) kopioi näytteet
-//! kiinteisiin puskureihin ja lukee tapahtumat tavuina.
+//! The browser sees a few C functions (`#[no_mangle] extern "C"`) and the wasm memory.
+//! No wasm-bindgen: the JavaScript glue (web/worklet.js) copies samples into
+//! fixed buffers and reads events as bytes.
 //!
-//! Moduulissa on yksi asema kerrallaan. Kaikki kutsut tulevat AudioWorkletin
-//! säikeestä, joten samanaikaisuutta ei ole.
+//! The module holds one station at a time. All calls come from the AudioWorklet
+//! thread, so there is no concurrency.
 //!
-//! Tapahtumien tavumuoto (`sp_poll_event`), monitavuiset kentät little-endian:
+//! Byte format of events (`sp_poll_event`), multi-byte fields little-endian:
 //!
-//! | tyyppi | sisältö |
+//! | type | content |
 //! |---|---|
-//! | 1 lähetyksen tila | alatyyppi u8, a u32, b u32, c u32 |
-//! | 2 perillä | tunniste u16, kesto ms u32 |
-//! | 3 epäonnistui | syy u8, neuvo u8, onko laatu u8, SNR i8, taso i8, leikkautuu u8 |
-//! | 4 peruutettu | |
-//! | 5 vastaanotto alkoi | tunniste u16, pituus u32 |
-//! | 6 vastaanoton edistyminen | saatu u32, yhteensä u32 |
-//! | 7 vastaanotettu | tunniste u16, pituus u32, tavut |
-//! | 8 vastaanotto keskeytyi | syy u8 |
-//! | 9 loki | UTF-8-teksti |
+//! | 1 send status | subtype u8, a u32, b u32, c u32 |
+//! | 2 delivered | id u16, duration ms u32 |
+//! | 3 failed | reason u8, hint u8, has quality u8, SNR i8, level i8, clipping u8 |
+//! | 4 cancelled | |
+//! | 5 receive started | id u16, length u32 |
+//! | 6 receive progress | have u32, total u32 |
+//! | 7 received | id u16, length u32, bytes |
+//! | 8 receive aborted | reason u8 |
+//! | 9 log | UTF-8 text |
 
 use modem_core::link::{AbortReason, Event, FailReason, Hint, LinkConfig, SendError, TxStatus};
 use modem_core::phy::PhyKind;
 use modem_core::station::Station;
 
-/// Suurin lohko, jonka `sp_process` käsittelee kerralla (AudioWorklet käyttää 128:aa).
+/// Largest block `sp_process` handles at once (AudioWorklet uses 128).
 const MAX_BLOCK: usize = 4096;
 
 struct State {
@@ -38,11 +38,11 @@ static mut STATE: Option<State> = None;
 
 #[allow(static_mut_refs)]
 fn state() -> Option<&'static mut State> {
-    // Turvallista, koska wasm-moduulia kutsutaan vain yhdestä säikeestä.
+    // Safe because the wasm module is only ever called from one thread.
     unsafe { STATE.as_mut() }
 }
 
-/// Varaa `len` tavua wasm-muistista JavaScriptin käyttöön.
+/// Allocate `len` bytes of wasm memory for JavaScript to use.
 #[no_mangle]
 pub extern "C" fn sp_alloc(len: usize) -> *mut u8 {
     let mut buf = Vec::<u8>::with_capacity(len.max(1));
@@ -51,17 +51,17 @@ pub extern "C" fn sp_alloc(len: usize) -> *mut u8 {
     ptr
 }
 
-/// Vapauta `sp_alloc`:lla varattu muisti.
+/// Free memory allocated with `sp_alloc`.
 ///
 /// # Safety
-/// `ptr` ja `len` ovat samat kuin varattaessa.
+/// `ptr` and `len` are the same as when allocating.
 #[no_mangle]
 pub unsafe extern "C" fn sp_free(ptr: *mut u8, len: usize) {
     drop(Vec::from_raw_parts(ptr, 0, len.max(1)));
 }
 
-/// Luo asema. Näytteenottotaajuus tulee AudioContextista, siemen selaimen
-/// satunnaislähteestä. Liput: bitti 0 = aina erillinen kättely (ei pikalähetystä).
+/// Create the station. The sample rate comes from the AudioContext, the seed from the
+/// browser's random source. Flags: bit 0 = always a separate handshake (no inline start).
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn sp_new(sample_rate: f32, seed_lo: u32, seed_hi: u32, flags: u32) {
@@ -78,19 +78,19 @@ pub extern "C" fn sp_max_block() -> usize {
     MAX_BLOCK
 }
 
-/// Mikrofonipuskurin osoite: JavaScript kirjoittaa tänne ennen `sp_process`-kutsua.
+/// Address of the microphone buffer: JavaScript writes here before calling `sp_process`.
 #[no_mangle]
 pub extern "C" fn sp_input_ptr() -> *mut f32 {
     state().map_or(std::ptr::null_mut(), |s| s.input.as_mut_ptr())
 }
 
-/// Kaiutinpuskurin osoite: JavaScript lukee täältä `sp_process`-kutsun jälkeen.
+/// Address of the speaker buffer: JavaScript reads from here after calling `sp_process`.
 #[no_mangle]
 pub extern "C" fn sp_output_ptr() -> *const f32 {
     state().map_or(std::ptr::null(), |s| s.output.as_ptr())
 }
 
-/// Käsittele `n` näytettä puskureista.
+/// Process `n` samples from the buffers.
 #[no_mangle]
 pub extern "C" fn sp_process(n: usize) {
     if let Some(s) = state() {
@@ -100,10 +100,10 @@ pub extern "C" fn sp_process(n: usize) {
     }
 }
 
-/// Aloita lähetys. Palauttaa 0 = ok, 1 = edellinen kesken, 2 = liian pitkä, 3 = asemaa ei ole.
+/// Start a send. Returns 0 = ok, 1 = previous one in progress, 2 = too long, 3 = no station.
 ///
 /// # Safety
-/// `ptr` osoittaa `len` tavuun wasm-muistissa.
+/// `ptr` points to `len` bytes of wasm memory.
 #[no_mangle]
 pub unsafe extern "C" fn sp_send(ptr: *const u8, len: usize) -> i32 {
     let Some(s) = state() else { return 3 };
@@ -127,35 +127,35 @@ pub extern "C" fn sp_max_message() -> usize {
     state().map_or(0, |s| s.station.max_message())
 }
 
-/// Arvio siirron kestosta sekunteina `len` tavun viestille.
+/// Estimated transfer duration in seconds for a message of `len` bytes.
 #[no_mangle]
 pub extern "C" fn sp_estimate(len: usize) -> f32 {
     state().map_or(0.0, |s| s.station.estimate_seconds(len) as f32)
 }
 
-/// Mikrofonin tehollisarvo (noin 100 ms:n liukuva keskiarvo).
+/// Microphone RMS level (a moving average over about 100 ms).
 #[no_mangle]
 pub extern "C" fn sp_level() -> f32 {
     state().map_or(0.0, |s| s.station.input_level().0)
 }
 
-/// Mikrofonin huippuarvo viimeisimmässä lohkossa.
+/// Microphone peak value in the most recent block.
 #[no_mangle]
 pub extern "C" fn sp_peak() -> f32 {
     state().map_or(0.0, |s| s.station.input_level().1)
 }
 
-/// Aseman kello millisekunteina (käsitellyistä näytteistä).
+/// Station clock in milliseconds (from the samples processed).
 #[no_mangle]
 pub extern "C" fn sp_now_ms() -> f64 {
     state().map_or(0.0, |s| s.station.now_ms() as f64)
 }
 
-/// Fyysisen kerroksen laskurit: 5 × u32 (alkumerkit, ehjät, hylätyt, lähetetyt,
-/// korjatut tavut) ja 2 × f32 (viimeisin SNR dB, viimeisin taso).
+/// Physical-layer counters: 5 × u32 (preambles, intact, rejected, sent,
+/// corrected bytes) and 2 × f32 (latest SNR dB, latest level).
 ///
 /// # Safety
-/// `out` osoittaa vähintään 28 tavuun.
+/// `out` points to at least 28 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn sp_stats(out: *mut u8) {
     let Some(s) = state() else { return };
@@ -235,12 +235,12 @@ pub fn encode_event(e: &Event) -> Vec<u8> {
     b
 }
 
-/// Hae seuraava tapahtuma puskuriin. Palauttaa tavumäärän, 0 jos tapahtumia ei
-/// ole, tai negatiivisen tarvittavan koon, jos puskuri on liian pieni (tapahtuma
-/// säilyy jonossa).
+/// Fetch the next event into the buffer. Returns the byte count, 0 if there are no
+/// events, or the negated required size if the buffer is too small (the event
+/// stays queued).
 ///
 /// # Safety
-/// `out` osoittaa `cap` tavuun wasm-muistissa.
+/// `out` points to `cap` bytes of wasm memory.
 #[no_mangle]
 pub unsafe extern "C" fn sp_poll_event(out: *mut u8, cap: usize) -> i32 {
     static mut PENDING: Option<Vec<u8>> = None;
@@ -277,16 +277,16 @@ mod tests {
             encode_event(&Event::Failed { reason: FailReason::TooManyRetries, hint: Hint::Noisy, quality: Some(Quality { snr_db: -2, level_db: -40, clipped: false }) }),
             [3, 2, 3, 1, 0xFE, 0xD8, 0]
         );
-        assert_eq!(encode_event(&Event::Received { id: 1, data: "ä".as_bytes().to_vec() }), [7, 1, 0, 2, 0, 0, 0, 0xC3, 0xA4]);
+        assert_eq!(encode_event(&Event::Received { id: 1, data: "é".as_bytes().to_vec() }), [7, 1, 0, 2, 0, 0, 0, 0xC3, 0xA9]);
         assert_eq!(encode_event(&Event::RxAborted { reason: AbortReason::Cancelled }), [8, 1]);
         assert_eq!(encode_event(&Event::Log("ok".into())), [9, b'o', b'k']);
     }
 
     #[test]
     fn two_wasm_style_stations_talk_through_the_c_api() {
-        // Sama polku kuin selaimessa: puskurit, sp_process, tapahtumien tavut.
+        // The same path as in the browser: buffers, sp_process, event bytes.
         sp_new(48000.0, 1, 2, 0);
-        let msg = b"wasm-rajapinnan testi";
+        let msg = b"test of the wasm API!";
         let ptr = sp_alloc(msg.len());
         unsafe {
             std::ptr::copy_nonoverlapping(msg.as_ptr(), ptr, msg.len());
@@ -296,7 +296,7 @@ mod tests {
         }
         assert!(sp_estimate(msg.len()) > 1.0 && sp_estimate(msg.len()) < 4.0);
         assert_eq!(sp_max_message(), 512);
-        // Vastapuoli on tavallinen asema; ääni kulkee suoraan puskurista toiseen.
+        // The peer is an ordinary station; audio goes straight from one buffer to the other.
         let mut peer = Station::new(PhyKind::DEFAULT, 48000.0, LinkConfig::default(), 9);
         let mut to_peer = vec![0.0f32; 128];
         let mut from_peer = vec![0.0f32; 128];
@@ -305,7 +305,7 @@ mod tests {
         let mut buf = vec![0u8; 1024];
         for _ in 0..(48000 * 8 / 128) {
             unsafe {
-                // Kumpikin kuulee toisen ja pienen kohinan (tyhjä hiljaisuus ei ole realistinen).
+                // Each hears the other plus a little noise (pure silence is not realistic).
                 let input = std::slice::from_raw_parts_mut(sp_input_ptr(), 128);
                 for (i, v) in input.iter_mut().enumerate() {
                     *v = from_peer[i] * 0.2 + ((i * 7919) % 13) as f32 * 1e-5;

@@ -1,17 +1,17 @@
-//! Taustakohina ja äkilliset häiriöt.
+//! Background noise and sudden interference.
 
 use crate::rng::Rng;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub enum NoiseKind {
-    /// Tasainen spektri koko kaistalla.
+    /// Flat spectrum over the whole band.
     White,
-    /// Teho painottuu mataliin taajuuksiin (noin -3 dB/oktaavi), kuten
-    /// tyypillinen huonemelu (ilmastointi, tuulettimet, liikenne).
+    /// Power is weighted towards low frequencies (about -3 dB/octave), like
+    /// typical room noise (air conditioning, fans, traffic).
     Pink,
-    /// Oikea äänite (sama näytteenottotaajuus kuin vastaanottimella),
-    /// toistetaan silmukkana satunnaisesta kohdasta.
+    /// A real recording (same sample rate as the receiver),
+    /// looped from a random position.
     Recorded(Arc<Vec<f32>>),
 }
 
@@ -41,7 +41,7 @@ impl NoiseSource {
         self.rms = rms;
     }
 
-    /// Lisää kohinaa lohkoon.
+    /// Add noise to a block.
     pub fn add(&mut self, out: &mut [f32]) {
         if self.rms <= 0.0 {
             return;
@@ -53,9 +53,9 @@ impl NoiseSource {
                 }
             }
             NoiseKind::Pink => {
-                // Paul Kelletin suodin: valkoisesta kohinasta vaaleanpunaista
-                // seitsemällä ensimmäisen asteen suotimella. Lähdön RMS on noin 1/0,11
-                // ennen skaalausta, kun tulon RMS on 1.
+                // Paul Kellet's filter: pink noise from white noise
+                // with seven first-order filters. The output RMS is about 1/0.11
+                // before scaling when the input RMS is 1.
                 let b = &mut self.pink;
                 for v in out {
                     let w = self.rng.gauss();
@@ -89,20 +89,20 @@ impl NoiseSource {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InterferenceKind {
-    /// Puheen kaltainen: tavutahtiin (noin 4 Hz) sykkivä kohina, jonka teho on
-    /// puhekaistalla.
+    /// Speech-like: noise pulsing at syllable rate (about 4 Hz) with its power
+    /// in the speech band.
     Babble,
-    /// Kolahdus: äkillinen laajakaistainen isku, joka vaimenee noin 50 ms:ssa.
+    /// Thump: a sudden wideband impact that decays in about 50 ms.
     Click,
 }
 
-/// Ajastettu häiriö mikrofonissa.
+/// Scheduled interference at the microphone.
 #[derive(Clone, Copy, Debug)]
 pub struct Interference {
     pub kind: InterferenceKind,
     pub start_s: f64,
     pub duration_s: f64,
-    /// Huipputason tehollisarvo.
+    /// RMS of the peak level.
     pub rms: f32,
 }
 
@@ -135,7 +135,7 @@ impl InterferencePlayer {
                 let w = self.rng.gauss();
                 match it.kind {
                     InterferenceKind::Babble => {
-                        // Kaksi peräkkäistä alipäästöä (~3 kHz) rajaa tehon puhekaistalle.
+                        // Two cascaded low-pass filters (~3 kHz) limit the power to the speech band.
                         let a = (1.0 - (-std::f64::consts::TAU * 3000.0 / self.fs).exp()) as f32;
                         self.lp[0] += a * (w - self.lp[0]);
                         self.lp[1] += a * (self.lp[0] - self.lp[1]);

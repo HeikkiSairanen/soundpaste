@@ -1,12 +1,12 @@
-//! Synteettinen huoneen impulssivaste.
+//! Synthetic room impulse response.
 //!
-//! Suora ääni on yksikköimpulssi hetkellä 0. Sen perään tulee muutama erillinen
-//! varhainen heijastus ja eksponentiaalisesti vaimeneva kohinahäntä, joka on
-//! tavanomainen malli diffuusille jälkikaiunnalle. Parametrit:
-//! - RT60: aika, jossa kaiku vaimenee 60 dB
-//! - DRR: suoran äänen ja kaiun energiasuhde desibeleinä (direct-to-reverberant)
+//! The direct sound is a unit impulse at time 0. It is followed by a few discrete
+//! early reflections and an exponentially decaying noise tail, which is
+//! the usual model for diffuse reverberation. Parameters:
+//! - RT60: time in which the echo decays by 60 dB
+//! - DRR: energy ratio of direct sound to echo in decibels (direct-to-reverberant)
 //!
-//! Oikeat mitatut impulssivasteet korvaavat tämän, kun niitä on (ks. korpus).
+//! Real measured impulse responses replace this when available (see the corpus).
 
 use crate::rng::Rng;
 
@@ -14,13 +14,13 @@ pub fn synth_ir(fs: f64, rt60_s: f64, drr_db: f64, seed: u64) -> Vec<f32> {
     let mut rng = Rng::new(seed ^ 0x1A2B_3C4D);
     let len = ((rt60_s * fs) as usize).max(1);
     let mut h = vec![0.0f32; len];
-    // -60 dB amplitudissa = kerroin 10^-3 = exp(-6.908).
+    // -60 dB in amplitude = factor 10^-3 = exp(-6.908).
     let decay = 6.908 / (rt60_s * fs);
     let start = (0.002 * fs) as usize;
     for (n, v) in h.iter_mut().enumerate().skip(start) {
         *v = rng.gauss() * (-(decay * n as f64)).exp() as f32;
     }
-    // Muutama erillinen varhainen heijastus (pöytä, seinä, näyttö).
+    // A few discrete early reflections (desk, wall, display).
     for _ in 0..4 {
         let t = rng.range(0.001, 0.02);
         let n = (t * fs) as usize;
@@ -38,7 +38,7 @@ pub fn synth_ir(fs: f64, rt60_s: f64, drr_db: f64, seed: u64) -> Vec<f32> {
     h
 }
 
-/// Impulssivasteen energia (Σ h²). Valkoisen signaalin teho kasvaa tällä kertoimella.
+/// Energy of the impulse response (Σ h²). The power of a white signal grows by this factor.
 pub fn energy(h: &[f32]) -> f64 {
     h.iter().map(|&v| (v as f64) * (v as f64)).sum()
 }
@@ -53,7 +53,7 @@ mod tests {
         let h = synth_ir(fs, 0.4, 6.0, 1);
         let tail = energy(&h[1..]);
         assert!((10.0 * (1.0 / tail).log10() - 6.0).abs() < 0.1);
-        // Energia ensimmäisellä ja toisella puoliskolla: vaimenemisen pitää näkyä selvästi.
+        // Energy in the first and second half: the decay must be clearly visible.
         let a = energy(&h[1..h.len() / 2]);
         let b = energy(&h[h.len() / 2..]);
         assert!(a > 100.0 * b);

@@ -1,27 +1,27 @@
-//! Virtaava näytteenottotaajuuden muunnin (ikkunoitu sinc-interpolointi).
+//! Streaming sample rate converter (windowed sinc interpolation).
 //!
-//! Käytetään kanavasimulaattorissa mallintamaan sitä, että lähettäjän ja
-//! vastaanottajan äänikortit pyörivät eri taajuudella (44,1 vs 48 kHz) ja
-//! että kellot eivät ole täsmälleen nimellisarvossaan (ppm-virhe).
+//! Used in the channel simulator to model the fact that the sender's and
+//! receiver's sound cards run at different rates (44.1 vs 48 kHz) and
+//! that the clocks are not exactly at their nominal value (ppm error).
 
-const TAPS: usize = 24; // interpolointisuotimen pituus näytteinä
-const PHASES: usize = 512; // murto-osaviiveen tarkkuus
+const TAPS: usize = 24; // length of the interpolation filter in samples
+const PHASES: usize = 512; // resolution of the fractional delay
 
 pub struct Resampler {
-    /// Montako tulonäytettä yksi lähtönäyte vastaa.
+    /// How many input samples one output sample corresponds to.
     step: f64,
-    /// Seuraavan lähtönäytteen paikka historiapuskurin koordinaateissa.
+    /// Position of the next output sample in history buffer coordinates.
     pos: f64,
     hist: Vec<f32>,
-    table: Vec<f32>, // PHASES+1 riviä, TAPS saraketta
+    table: Vec<f32>, // PHASES+1 rows, TAPS columns
     bypass: bool,
 }
 
 impl Resampler {
-    /// `fs_in`: tulon todellinen taajuus, `fs_out`: lähdön todellinen taajuus.
+    /// `fs_in`: actual input rate, `fs_out`: actual output rate.
     pub fn new(fs_in: f64, fs_out: f64) -> Self {
         let step = fs_in / fs_out;
-        // Alaspäin muunnettaessa rajataajuutta lasketaan laskostumisen estämiseksi.
+        // When converting down, the cutoff is lowered to prevent aliasing.
         let cutoff = (1.0 / step).min(1.0) * 0.94;
         let mut table = Vec::with_capacity((PHASES + 1) * TAPS);
         for p in 0..=PHASES {
@@ -29,10 +29,10 @@ impl Resampler {
             let mut row = [0.0f64; TAPS];
             let mut sum = 0.0;
             for (k, r) in row.iter_mut().enumerate() {
-                // Näytteen k etäisyys interpolointipisteestä.
+                // Distance of sample k from the interpolation point.
                 let d = k as f64 - (TAPS as f64 / 2.0 - 1.0) - frac;
                 let s = if d.abs() < 1e-12 { 1.0 } else { (std::f64::consts::PI * d * cutoff).sin() / (std::f64::consts::PI * d * cutoff) };
-                // Hann-ikkuna koko suotimen leveydelle.
+                // Hann window over the whole filter width.
                 let w = 0.5 + 0.5 * (std::f64::consts::PI * d / (TAPS as f64 / 2.0)).cos();
                 *r = s * w.max(0.0);
                 sum += *r;
@@ -44,14 +44,14 @@ impl Resampler {
         Resampler { step, pos: 0.0, hist: vec![0.0; TAPS], table, bypass: (step - 1.0).abs() < 1e-12 }
     }
 
-    /// Syötä lohko ja lisää valmistuneet lähtönäytteet `out`-vektoriin.
+    /// Feed a block and append the finished output samples to `out`.
     pub fn process(&mut self, input: &[f32], out: &mut Vec<f32>) {
         if self.bypass {
             out.extend_from_slice(input);
             return;
         }
         self.hist.extend_from_slice(input);
-        // Lähtönäyte kohdassa pos tarvitsee näytteet [floor(pos), floor(pos)+TAPS).
+        // An output sample at pos needs samples [floor(pos), floor(pos)+TAPS).
         loop {
             let i = self.pos.floor() as usize;
             if i + TAPS > self.hist.len() {
@@ -71,7 +71,7 @@ impl Resampler {
             out.push(acc);
             self.pos += self.step;
         }
-        // Pudotetaan käytetty historia.
+        // Drop the used history.
         let keep_from = (self.pos.floor() as usize).min(self.hist.len());
         if keep_from > 0 {
             self.hist.drain(0..keep_from);
@@ -98,7 +98,7 @@ mod tests {
         let mid = &y[10000..10000 + 4800];
         let p = goertzel_power(mid, 3000.0, fo);
         assert!((p - 0.25).abs() < 0.01, "{p}");
-        // Viereisellä taajuudella ei saa olla merkittävää tehoa.
+        // There must be no significant power at the neighbouring frequency.
         assert!(goertzel_power(mid, 3500.0, fo) < 1e-4);
     }
 

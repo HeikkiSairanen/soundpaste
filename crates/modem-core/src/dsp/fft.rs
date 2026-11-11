@@ -1,8 +1,8 @@
-//! Radix-2 FFT (Cooley–Tukey, iteratiivinen, paikallaan).
+//! Radix-2 FFT (Cooley–Tukey, iterative, in place).
 //!
-//! Reaali- ja imaginaariosat ovat erillisissä taulukoissa, mikä on yksinkertaisin
-//! muoto ilman kompleksilukutyyppiä. Kiertotekijät ja bittikäännöstaulu lasketaan
-//! kerran, joten samaa `Fft`-oliota kannattaa käyttää uudelleen.
+//! Real and imaginary parts are in separate arrays, which is the simplest
+//! form without a complex number type. Twiddle factors and the bit-reversal table are
+//! computed once, so the same `Fft` object should be reused.
 
 pub struct Fft {
     n: usize,
@@ -12,9 +12,9 @@ pub struct Fft {
 }
 
 impl Fft {
-    /// `n` on kahden potenssi.
+    /// `n` is a power of two.
     pub fn new(n: usize) -> Self {
-        assert!(n.is_power_of_two() && n >= 2, "FFT:n koon pitää olla kahden potenssi");
+        assert!(n.is_power_of_two() && n >= 2, "FFT size must be a power of two");
         let bits = n.trailing_zeros();
         let half = n / 2;
         let mut cos = Vec::with_capacity(half);

@@ -1,14 +1,14 @@
-//! Liukuva taajuusilmaisin ("sliding DFT bin").
+//! Sliding frequency detector ("sliding DFT bin").
 //!
-//! Sekoitetaan tulosignaali kompleksisella eksponentilla taajuudelle f ja
-//! pidetään yllä viimeisten N näytteen summaa. Summan itseisarvon neliö on
-//! taajuuden f teho N näytteen ikkunassa, ja se päivittyy vakioajassa
-//! jokaisella näytteellä. Tämä vastaa Goertzelia, joka lasketaan uudelleen
-//! joka näytteellä, mutta maksaa vain muutaman kertolaskun per näyte.
+//! The input signal is mixed with a complex exponential at frequency f and
+//! the sum of the last N samples is maintained. The squared magnitude of the sum is
+//! the power at frequency f in a window of N samples, and it updates in constant time
+//! on every sample. This is equivalent to a Goertzel recomputed
+//! on every sample, but costs only a few multiplications per sample.
 
 pub struct SlidingBin {
     n: usize,
-    // Vaiheen eteneminen per näyte (yksikköympyrällä).
+    // Phase advance per sample (on the unit circle).
     step: (f64, f64),
     phasor: (f64, f64),
     ring_re: Vec<f32>,
@@ -33,8 +33,8 @@ impl SlidingBin {
         }
     }
 
-    /// Syötä yksi näyte ja palauta ikkunan teho |Σ|² / N².
-    /// Siniaallolle, jonka amplitudi on A ja taajuus f, tulos on A²/4.
+    /// Feed one sample and return the window power |Σ|² / N².
+    /// For a sine wave with amplitude A and frequency f the result is A²/4.
     #[inline]
     pub fn push(&mut self, x: f32) -> f32 {
         let zr = x * self.phasor.0 as f32;
@@ -46,7 +46,7 @@ impl SlidingBin {
         self.pos += 1;
         if self.pos == self.n {
             self.pos = 0;
-            // Liukulukuvirhe kertyy juoksevaan summaan; lasketaan se välillä tarkasti uudelleen.
+            // Floating-point error accumulates in the running sum; recompute it exactly now and then.
             self.renorm += 1;
             if self.renorm >= 64 {
                 self.renorm = 0;
@@ -57,7 +57,7 @@ impl SlidingBin {
         let (pr, pi) = self.phasor;
         let nr = pr * self.step.0 - pi * self.step.1;
         let ni = pr * self.step.1 + pi * self.step.0;
-        // Pidetään osoitin yksikköympyrällä.
+        // Keep the phasor on the unit circle.
         let g = 1.5 - 0.5 * (nr * nr + ni * ni);
         self.phasor = (nr * g, ni * g);
         let inv = 1.0 / self.n as f64;

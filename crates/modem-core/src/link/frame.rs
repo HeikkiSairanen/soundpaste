@@ -1,16 +1,16 @@
-//! Linkkikerroksen kehykset tavu tavulta (DESIGN.md luku 5.1).
+//! Link layer frames byte by byte (DESIGN.md section 5.1).
 //!
-//! Tavu 0: tyyppi (ylempi puolitavu) ja liput (alempi). Tavut 1–2: viestin
-//! tunniste. Loput riippuvat tyypistä. Monitavuiset kentät ovat big-endian.
+//! Byte 0: type (upper nibble) and flags (lower). Bytes 1–2: message
+//! identifier. The rest depends on the type. Multi-byte fields are big-endian.
 
-/// Vastaanottajan raportoima signaalin laatu.
+/// Signal quality reported by the receiver.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Quality {
-    /// Modeemin oman kaistan signaali-kohinasuhde, dB.
+    /// Signal-to-noise ratio in the modem's own band, dB.
     pub snr_db: i8,
-    /// Signaalin tehollisarvo mikrofonissa, dBFS.
+    /// Signal RMS at the microphone, dBFS.
     pub level_db: i8,
-    /// Mikrofoni leikkaa.
+    /// The microphone is clipping.
     pub clipped: bool,
 }
 
@@ -30,24 +30,24 @@ impl Quality {
     }
 }
 
-const FLAG_EOB: u8 = 0x01; // DATA: ryöpyn viimeinen kehys
-const FLAG_RESTART: u8 = 0x01; // ACK: koottu viesti ei täsmännyt, aloita alusta
-const FLAG_INLINE: u8 = 0x02; // START: koko viesti on kehyksen lopussa
+const FLAG_EOB: u8 = 0x01; // DATA: last frame of the burst
+const FLAG_RESTART: u8 = 0x01; // ACK: the assembled message did not match, start over
+const FLAG_INLINE: u8 = 0x02; // START: the whole message is at the end of the frame
 #[allow(dead_code)]
-const FLAG_ENCRYPTED: u8 = 0x08; // varattu
+const FLAG_ENCRYPTED: u8 = 0x08; // reserved
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
-    /// Aloitus: viestin pituus, kehysten määrä, kehyksen datakoko ja koko viestin CRC-32.
-    /// `inline`: lyhyt viesti kulkee aloituskehyksen mukana.
+    /// Start: message length, number of frames, frame data size and CRC-32 of the whole message.
+    /// `inline`: a short message travels with the start frame.
     Start { id: u16, len: u16, frames: u8, chunk: u8, crc: u32, inline: Option<Vec<u8>> },
     StartAck { id: u16, quality: Quality },
     Data { id: u16, seq: u8, eob: bool, data: Vec<u8> },
-    /// Koontikuittaus: bitti i on 1, jos kehys i on tallessa.
+    /// Combined ack: bit i is 1 if frame i has been stored.
     Ack { id: u16, quality: Quality, restart: bool, bitmap: Vec<u8> },
-    /// Loppukuittaus: viesti on koossa ja sen CRC-32 on tämä.
+    /// Final ack: the message is complete and its CRC-32 is this.
     Done { id: u16, crc: u32 },
-    /// Lähettäjä pyytää kuittauksen uudelleen.
+    /// The sender asks for the ack again.
     Poll { id: u16 },
     Cancel { id: u16 },
 }
@@ -65,7 +65,7 @@ impl Frame {
         }
     }
 
-    /// Lähettääkö tämän kehystyypin viestin lähettäjä (vai vastaanottaja)?
+    /// Is this frame type sent by the sender of the message (or by the receiver)?
     pub fn from_sender(&self) -> bool {
         matches!(self, Frame::Start { .. } | Frame::Data { .. } | Frame::Poll { .. } | Frame::Cancel { .. })
     }
@@ -123,7 +123,7 @@ impl Frame {
         }
     }
 
-    /// Jäsennä kehys. Tuntematon tyyppi tai liian lyhyt kehys -> None.
+    /// Parse a frame. Unknown type or too short a frame -> None.
     pub fn decode(b: &[u8]) -> Option<Frame> {
         if b.len() < 3 {
             return None;
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn garbage_is_rejected() {
         assert_eq!(Frame::decode(&[]), None);
-        assert_eq!(Frame::decode(&[0x10, 0, 0, 1]), None); // START liian lyhyt
-        assert_eq!(Frame::decode(&[0xF0, 0, 0]), None); // tuntematon tyyppi
+        assert_eq!(Frame::decode(&[0x10, 0, 0, 1]), None); // START too short
+        assert_eq!(Frame::decode(&[0xF0, 0, 0]), None); // unknown type
     }
 }

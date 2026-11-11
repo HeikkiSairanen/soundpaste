@@ -1,9 +1,9 @@
-//! Asema oikealla äänellä: sama tilakone kuin selaimessa, ääni SoX:n kautta.
+//! Station on real audio: the same state machine as in the browser, audio via SoX.
 //!
-//! `rec` syöttää mikrofonin näytteitä putkeen ja `play` soittaa putkesta.
-//! Silmukka lukee 10 ms mikrofonia, antaa sen asemalle ja kirjoittaa aseman
-//! tuottamat 10 ms kaiuttimelle. Hiljaisuuskin kirjoitetaan, jotta äänilaite
-//! pysyy auki ja viive vakiona.
+//! `rec` feeds microphone samples into a pipe and `play` plays from a pipe.
+//! The loop reads 10 ms of microphone, hands it to the station and writes the
+//! 10 ms the station produced to the speaker. Silence is written too, so that the
+//! audio device stays open and the latency stays constant.
 
 use crate::args::Args;
 use crate::audio;
@@ -22,13 +22,13 @@ const BLOCK: usize = 480;
 fn describe(e: &Event) -> Option<String> {
     Some(match e {
         Event::Log(s) => s.clone(),
-        Event::Received { data, .. } => format!("VASTAANOTETTU ({} tavua): {}", data.len(), String::from_utf8_lossy(data)),
-        Event::Delivered { elapsed, .. } => format!("PERILLÄ {:.2} s", *elapsed as f64 / 1000.0),
+        Event::Received { data, .. } => format!("RECEIVED ({} bytes): {}", data.len(), String::from_utf8_lossy(data)),
+        Event::Delivered { elapsed, .. } => format!("DELIVERED {:.2} s", *elapsed as f64 / 1000.0),
         other => format!("{other:?}"),
     })
 }
 
-/// `soundpaste live [--send "teksti"] [--seconds N] [--echo] [--once]`
+/// `soundpaste live [--send "text"] [--seconds N] [--echo] [--once]`
 pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &["handshake", "quiet", "echo", "once", "no-save", "holdout", "no-holdout"])?;
     audio::check_tools()?;
@@ -46,7 +46,7 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let mut mic = rec.stdout.take().unwrap();
     let mut speaker = play.stdin.take().unwrap();
 
-    println!("ASEMA {} oikealla äänellä ({} Hz). {}", kind.name(), FS, match &send { Some(s) => format!("Lähetetään {} tavua.", s.len()), None => "Kuunnellaan.".into() });
+    println!("STATION {} on real audio ({} Hz). {}", kind.name(), FS, match &send { Some(s) => format!("Sending {} bytes.", s.len()), None => "Listening.".into() });
     let mut recording: Vec<f32> = Vec::new();
     let mut bytes = vec![0u8; BLOCK * 4];
     let mut input = vec![0.0f32; BLOCK];
@@ -60,14 +60,14 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let mut echo_queue: Option<(f64, Vec<u8>)> = None;
     loop {
         if mic.read_exact(&mut bytes).is_err() {
-            return Err("mikrofonin lukeminen katkesi".into());
+            return Err("reading the microphone was interrupted".into());
         }
         for (i, v) in input.iter_mut().enumerate() {
             *v = f32::from_le_bytes([bytes[4 * i], bytes[4 * i + 1], bytes[4 * i + 2], bytes[4 * i + 3]]);
         }
         recording.extend_from_slice(&input);
         let t = recording.len() as f64 / FS as f64;
-        // Annetaan äänilaitteen käynnistyä ennen lähetystä.
+        // Let the audio device start up before sending.
         if !sent && t >= 1.0 {
             if let Some(data) = &send {
                 station.send(data).map_err(|e| format!("{e:?}"))?;
@@ -85,7 +85,7 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
             out_bytes[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
         }
         if speaker.write_all(&out_bytes).is_err() {
-            return Err("kaiuttimeen kirjoittaminen katkesi".into());
+            return Err("writing to the speaker was interrupted".into());
         }
         while let Some(e) = station.poll_event() {
             match &e {
@@ -127,25 +127,25 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let _ = play.wait();
     let _ = rec.wait();
     let st = station.stats();
-    println!("alkumerkkejä {}, ehjiä kehyksiä {}, hylättyjä {}, lähetettyjä {}, korjattuja tavuja {}", st.preambles, st.frames_ok, st.frames_failed, st.frames_sent, st.corrected);
+    println!("preambles {}, intact frames {}, rejected {}, sent {}, corrected bytes {}", st.preambles, st.frames_ok, st.frames_failed, st.frames_sent, st.corrected);
 
-    // --record tiedosto.wav: koko mikrofoniäänite talteen analyysia varten.
+    // --record file.wav: save the whole microphone recording for analysis.
     if let Some(path) = a.str("record") {
         std::fs::write(path, wav::encode_pcm16(FS, &recording)).map_err(|e| format!("{path}: {e}"))?;
-        println!("äänite: {path}");
+        println!("recording: {path}");
     }
-    // Äänite korpukseen. Odotettu sisältö on se, mitä tämän aseman piti vastaanottaa.
+    // Recording into the corpus. The expected content is what this station was supposed to receive.
     let expected: Option<Vec<u8>> = expect.as_ref().map(|s| s.as_bytes().to_vec()).or_else(|| received.first().cloned());
     if !a.has("no-save") {
         if let Some(text) = &expected {
-            let id = format!("{}-{}-sessio-{}", bench::utc_now(), a.str_or("label", "mac"), kind.name());
+            let id = format!("{}-{}-session-{}", bench::utc_now(), a.str_or("label", "mac"), kind.name());
             let holdout = if a.has("holdout") { true } else if a.has("no-holdout") { false } else { corpus::auto_holdout(&id) };
             std::fs::create_dir_all(corpus::TX_DIR).map_err(|e| e.to_string())?;
             let base = std::path::Path::new(corpus::TX_DIR).join(&id);
             std::fs::write(base.with_extension("wav"), wav::encode_pcm16(FS, &recording)).map_err(|e| e.to_string())?;
             let meta = Json::obj(vec![
                 ("id", Json::str(&id)),
-                ("kind", Json::str("sessio")),
+                ("kind", Json::str("session")),
                 ("time_utc", Json::str(&bench::utc_now())),
                 ("device", Json::str(&a.str("device").map(String::from).unwrap_or_else(audio::device_description))),
                 ("sample_rate", Json::num(FS)),
@@ -158,7 +158,7 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
                 ("ok_when_recorded", Json::Bool(received.iter().any(|r| r == text))),
             ]);
             std::fs::write(base.with_extension("json"), meta.pretty()).map_err(|e| e.to_string())?;
-            println!("äänite: {}.wav", base.display());
+            println!("recording: {}.wav", base.display());
         }
     }
     let ok = match (&send, &expect) {

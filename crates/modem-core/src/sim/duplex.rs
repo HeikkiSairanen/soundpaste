@@ -1,15 +1,15 @@
-//! Kaksisuuntainen simulaatio: kaksi asemaa samassa huoneessa.
+//! Two-way simulation: two stations in the same room.
 //!
 //! ```text
-//!   asema A ──lähtöviive──► huone A→B ──┐
-//!      ▲  └──────► oma vuoto A→A ──┐     ├─► + melu, häiriöt, leikkaus ─► asema B
-//!      │                           ▼     │
-//!      └── + melu, häiriöt ◄── huone B→A ◄──lähtöviive── asema B (+ oma vuoto B→B)
+//!   station A ──output delay──► room A→B ──┐
+//!      ▲  └──────► self-leak A→A ──┐        ├─► + noise, interference, clipping ─► station B
+//!      │                           ▼        │
+//!      └── + noise, interference ◄── room B→A ◄──output delay── station B (+ self-leak B→B)
 //! ```
 //!
-//! Kummallakin asemalla on oma näytteenottotaajuus, kello ja ääniviiveet.
-//! Simulaatio etenee 10 ms:n askelin; asemat näkevät toistensa äänen vasta
-//! seuraavalla askeleella, mikä vastaa pientä lisäviivettä.
+//! Each station has its own sample rate, clock and audio latencies.
+//! The simulation advances in 10 ms steps; the stations hear each other's audio only
+//! on the next step, which corresponds to a small extra delay.
 
 use super::channel::{Path, PathConfig};
 use super::ir::energy;
@@ -23,15 +23,15 @@ use std::collections::VecDeque;
 #[derive(Clone, Debug)]
 pub struct Side {
     pub fs: f64,
-    /// Äänen lähtöviive (puskurit ennen kaiutinta) ja tuloviive (mikrofonista ohjelmalle).
+    /// Audio output delay (buffers before the speaker) and input delay (from the microphone to the program).
     pub out_latency_s: f64,
     pub in_latency_s: f64,
-    /// Huoneen impulssivaste toisen aseman kaiuttimesta tämän aseman mikrofoniin.
+    /// Room impulse response from the other station's speaker to this station's microphone.
     pub ir: Vec<f32>,
-    /// Vastaanotetun signaalin tehollisarvo mikrofonissa.
+    /// RMS of the received signal at the microphone.
     pub level: f32,
-    /// Oman kaiuttimen vuoto omaan mikrofoniin: impulssivaste ja taso. Taso 0 =
-    /// ei kuule itseään (kuulokkeet).
+    /// Leak of the station's own speaker into its own microphone: impulse response and level. Level 0 =
+    /// does not hear itself (headphones).
     pub self_ir: Vec<f32>,
     pub self_level: f32,
     pub noise: NoiseKind,
@@ -44,12 +44,12 @@ pub struct Side {
 pub struct DuplexConfig {
     pub kind: PhyKind,
     pub sides: [Side; 2],
-    /// Aseman B kellon virhe suhteessa asemaan A.
+    /// Clock error of station B relative to station A.
     pub clock_ppm: f64,
     pub seed: u64,
 }
 
-/// Lähetteen tehollisarvo, jota vasten tasot skaalataan.
+/// RMS of the transmission against which levels are scaled.
 const TX_RMS: f32 = 0.45;
 
 struct Mic {
@@ -110,7 +110,7 @@ impl Duplex {
         self.time_s
     }
 
-    /// Etene 10 ms.
+    /// Advance 10 ms.
     pub fn step(&mut self) {
         let mut outputs: [Vec<f32>; 2] = [Vec::new(), Vec::new()];
         for i in 0..2 {
@@ -128,14 +128,14 @@ impl Duplex {
             outputs[i] = out;
         }
         for i in 0..2 {
-            // Mikrofoni i kuulee toisen aseman huoneen läpi ja oman kaiuttimensa vuotona.
+            // Microphone i hears the other station through the room and its own speaker as a leak.
             self.tmp.clear();
             self.mics[i].cross.process(&outputs[1 - i], &mut self.tmp);
             let cross = std::mem::take(&mut self.tmp);
             let mut own = Vec::new();
             self.mics[i].own.process(&outputs[i], &mut own);
-            // Polkujen lähtömäärä voi heittää näytteen kellovirheen takia: summataan
-            // jonoon niin, että kumpikin polku säilyttää oman aikajanansa.
+            // The output counts of the paths can differ by a sample because of clock error: sum
+            // into the queue so that each path keeps its own timeline.
             let mic = &mut self.mics[i];
             let base = mic.fifo.len();
             let need = base + cross.len().max(own.len());
@@ -158,7 +158,7 @@ impl Duplex {
         }
     }
 
-    /// Aja, kunnes ehto täyttyy tai aikaraja ylittyy. Palauttaa, täyttyikö ehto.
+    /// Run until the condition holds or the time limit is exceeded. Returns whether the condition held.
     pub fn run_until(&mut self, max_seconds: f64, cond: impl Fn(&Duplex) -> bool) -> bool {
         let until = self.time_s + max_seconds;
         while !cond(self) {
@@ -182,12 +182,12 @@ impl Duplex {
         self.events[i].iter().any(|e| matches!(e, Event::Failed { .. }))
     }
 
-    /// Onko lähetys päättynyt (onnistuen tai epäonnistuen)?
+    /// Has the transmission ended (successfully or not)?
     pub fn settled(&self, i: usize) -> bool {
         self.delivered_ms(i).is_some() || self.failed(i)
     }
 
-    /// Vianetsintäloki molemmilta asemilta.
+    /// Debug log from both stations.
     pub fn log(&self) -> String {
         let mut s = String::new();
         for i in 0..2 {
@@ -200,7 +200,7 @@ impl Duplex {
 }
 
 impl Side {
-    /// Tavallinen kannettava hiljaisessa huoneessa.
+    /// An ordinary laptop in a quiet room.
     pub fn typical(fs: f64) -> Side {
         Side {
             fs,
@@ -238,10 +238,10 @@ mod tests {
         d.stations[0].send(LINK).unwrap();
         assert!(d.run_until(15.0, |d| d.settled(0)), "{}", d.log());
         assert_eq!(d.received(1), vec![LINK.to_vec()], "{}", d.log());
-        let ms = d.delivered_ms(0).expect("ei perillä");
-        // Pikalähetys (oletus): noin 2,6 s.
-        assert!((2000..3600).contains(&ms), "kesti {ms} ms\n{}", d.log());
-        // Kumpikaan ei tulkinnut omaa kaikuaan viestiksi.
+        let ms = d.delivered_ms(0).expect("not delivered");
+        // Inline start (default): about 2.6 s.
+        assert!((2000..3600).contains(&ms), "took {ms} ms\n{}", d.log());
+        // Neither interpreted its own echo as a message.
         assert!(d.received(0).is_empty());
         d.run(1.0);
         assert!(!d.stations[0].is_sending() && !d.stations[1].is_receiving());
@@ -258,9 +258,9 @@ mod tests {
         d.stations[0].send(LINK).unwrap();
         assert!(d.run_until(15.0, |d| d.settled(0)), "{}", d.log());
         assert_eq!(d.received(1), vec![LINK.to_vec()], "{}", d.log());
-        // DESIGN.md luku 6: noin 4,1 s.
-        let ms = d.delivered_ms(0).expect("ei perillä");
-        assert!((3200..5200).contains(&ms), "kesti {ms} ms\n{}", d.log());
+        // DESIGN.md section 6: about 4.1 s.
+        let ms = d.delivered_ms(0).expect("not delivered");
+        assert!((3200..5200).contains(&ms), "took {ms} ms\n{}", d.log());
     }
 
     #[test]
@@ -285,31 +285,31 @@ mod tests {
     fn both_press_send_and_both_messages_arrive() {
         let mut d = Duplex::new(&room(3));
         d.run(0.4);
-        d.stations[0].send(b"A:lta B:lle").unwrap();
+        d.stations[0].send(b"from A to B").unwrap();
         d.run(0.35);
-        d.stations[1].send("B:ltä A:lle ääkkösin".as_bytes()).unwrap();
+        d.stations[1].send("from B to A, café niño".as_bytes()).unwrap();
         assert!(d.run_until(40.0, |d| d.settled(0) && d.settled(1)), "{}", d.log());
-        assert_eq!(d.received(1), vec![b"A:lta B:lle".to_vec()], "{}", d.log());
-        assert_eq!(d.received(0), vec!["B:ltä A:lle ääkkösin".as_bytes().to_vec()], "{}", d.log());
+        assert_eq!(d.received(1), vec![b"from A to B".to_vec()], "{}", d.log());
+        assert_eq!(d.received(0), vec!["from B to A, café niño".as_bytes().to_vec()], "{}", d.log());
     }
 
     #[test]
     fn no_receiver_in_the_room() {
         let mut cfg = room(4);
-        cfg.sides[0].level = 0.0; // A ei kuule B:tä
-        cfg.sides[1].level = 0.0; // eikä B A:ta
+        cfg.sides[0].level = 0.0; // A does not hear B
+        cfg.sides[1].level = 0.0; // nor B A
         let mut d = Duplex::new(&cfg);
         d.stations[0].send(LINK).unwrap();
         assert!(d.run_until(15.0, |d| d.settled(0)), "{}", d.log());
         assert!(d.events[0].iter().any(|e| matches!(e, Event::Failed { reason: FailReason::NoReceiver, .. })), "{}", d.log());
-        assert!(d.time_s() < 10.0, "kesti {} s", d.time_s());
+        assert!(d.time_s() < 10.0, "took {} s", d.time_s());
         assert!(d.received(1).is_empty());
     }
 
     #[test]
     fn loud_interference_during_transfer_is_survived() {
         let mut cfg = room(5);
-        // Kolahduksia ja puhetta vastaanottajan mikrofonissa kesken datan.
+        // Thumps and speech at the receiver's microphone in the middle of the data.
         cfg.sides[1].interference = vec![
             Interference { kind: InterferenceKind::Click, start_s: 2.2, duration_s: 0.08, rms: 0.5 },
             Interference { kind: InterferenceKind::Babble, start_s: 3.0, duration_s: 1.5, rms: 0.3 },
@@ -333,9 +333,9 @@ mod tests {
         assert!(d.run_until(5.0, |d| d.events[1].iter().any(|e| matches!(e, Event::RxAborted { reason: AbortReason::Cancelled }))), "{}", d.log());
         assert!(d.events[0].contains(&Event::Cancelled));
         assert!(d.received(1).is_empty());
-        // Uusi viesti menee perille peruutuksen jälkeen.
+        // A new message gets through after the cancellation.
         d.run(0.5);
-        d.stations[0].send(b"uusi").unwrap();
+        d.stations[0].send(b"next").unwrap();
         assert!(d.run_until(15.0, |d| d.received(1).len() == 1), "{}", d.log());
     }
 

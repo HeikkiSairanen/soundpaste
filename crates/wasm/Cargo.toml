@@ -3,7 +3,7 @@ name = "soundpaste-wasm"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
-description = "WebAssembly-kääre: vie aseman (modeemi + linkkikerros) selaimelle C-rajapintana, ilman wasm-bindgeniä."
+description = "WebAssembly wrapper: exposes the station (modem + link layer) to the browser as a C API, without wasm-bindgen."
 
 [lib]
 crate-type = ["cdylib"]

@@ -1,12 +1,12 @@
-//! Linkkikerros: viestin siirto kehyksinä, kuittaukset ja uudelleenlähetykset.
+//! Link layer: transferring a message as frames, acks and retransmissions.
 //!
-//! [`Link`] on tilakone, joka ei tiedä äänestä mitään. Sille kerrotaan, mitä
-//! tapahtui (kehys vastaanotettu, alkumerkki havaittu, oma lähetys soitettu
-//! loppuun, kello eteni), ja se kertoo, mitä pitää tehdä ([`Action`]). Aika
-//! annetaan ulkoa millisekunteina, joten testit ovat deterministisiä.
+//! [`Link`] is a state machine that knows nothing about audio. It is told what
+//! happened (frame received, preamble detected, own transmission played
+//! to the end, clock advanced), and it tells what must be done ([`Action`]). Time
+//! is supplied from outside in milliseconds, so the tests are deterministic.
 //!
-//! Sama tilakone hoitaa molemmat roolit: se voi lähettää yhtä viestiä
-//! (`outgoing`) ja vastaanottaa toista (`incoming`). Protokolla: DESIGN.md luku 5.
+//! The same state machine handles both roles: it can send one message
+//! (`outgoing`) and receive another (`incoming`). Protocol: DESIGN.md section 5.
 
 pub mod frame;
 
@@ -20,41 +20,41 @@ const NEVER: Ms = Ms::MAX;
 
 #[derive(Clone, Debug)]
 pub struct LinkConfig {
-    /// Dataa per kehys (tavua).
+    /// Data per frame (bytes).
     pub chunk: usize,
-    /// Viestin enimmäispituus (tavua).
+    /// Maximum message length (bytes).
     pub max_message: usize,
-    /// Datakehyksiä per ryöppy ennen kuittausta. 0 = kaikki puuttuvat kerralla,
-    /// 1 = kehyskohtainen kuittaus.
+    /// Data frames per burst before an ack. 0 = all missing ones at once,
+    /// 1 = per-frame ack.
     pub burst: usize,
-    /// Yhteen kehykseen mahtuva viesti lähetetään ensimmäisen aloituskehyksen
-    /// mukana ("pikalähetys"). Jos siihen ei vastata, uudet yritykset ovat lyhyitä
-    /// aloituskehyksiä, jotta puuttuva vastaanottaja selviää nopeasti.
+    /// A message that fits in one frame is sent with the first start frame
+    /// ("inline start"). If it gets no reply, further attempts are short
+    /// start frames so that a missing receiver is found out quickly.
     pub inline_start: bool,
-    /// Vastaaja odottaa tämän verran vastaanotetun kehyksen lopusta (kaiun suoja-aika).
+    /// The responder waits this long from the end of the received frame (guard time for echo).
     pub response_delay: Ms,
-    /// Kauanko vastausta odotetaan oman kehyksen lopusta (mikrofonissa kuultuna).
+    /// How long a reply is awaited from the end of our own frame (as heard at the microphone).
     pub reply_timeout: Ms,
-    /// Jos omaa kehystä ei kuulu, sen oletetaan päättyneen tämän ajan kuluttua
-    /// lähetyksen lopusta (laitteen ääniviiveen yläraja).
+    /// If our own frame is not heard, it is assumed to have ended this long after
+    /// the end of the transmission (upper bound of the device's audio latency).
     pub echo_fallback: Ms,
     pub start_tries: u32,
     pub poll_tries: u32,
-    /// Uudelleenlähetyskierroksia enintään (varsinaisen lähetyksen lisäksi).
+    /// Maximum number of retransmission rounds (in addition to the actual transmission).
     pub max_rounds: u32,
-    /// Vastaanottaja luopuu osittaisesta viestistä, kun lähettäjästä ei ole
-    /// kuulunut tähän aikaan.
+    /// The receiver gives up on a partial message when nothing has been heard from
+    /// the sender for this long.
     pub rx_timeout: Ms,
-    /// Kanavan pitää olla hiljaa tämän verran ennen aloitusta.
+    /// The channel must be quiet for this long before starting.
     pub listen: Ms,
-    /// Satunnainen odotus, kun kanava oli varattu tai aloitus jäi vastaamatta.
+    /// Random wait when the channel was busy or the start got no reply.
     pub backoff: (Ms, Ms),
-    /// Tauko ryöpyn kehysten välissä.
+    /// Pause between the frames of a burst.
     pub frame_gap: Ms,
-    /// Vastaanottaja kuittaa, kun ryöpyn jälkeen on ollut näin kauan hiljaista
-    /// (kattaa tapauksen, jossa ryöpyn viimeinen kehys katosi).
+    /// The receiver acks when it has been quiet for this long after a burst
+    /// (covers the case where the last frame of the burst was lost).
     pub quiet_ack: Ms,
-    /// Valmiiden viestien muisti kaksoiskappaleiden tunnistamiseen.
+    /// Memory of completed messages for recognising duplicates.
     pub done_memory: usize,
     pub done_ttl: Ms,
 }
@@ -83,37 +83,37 @@ impl Default for LinkConfig {
     }
 }
 
-/// Lähetyksen tila käyttöliittymälle.
+/// Transmission state for the user interface.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxStatus {
-    /// Kuunnellaan, että kanava on vapaa.
+    /// Listening that the channel is free.
     Listening,
-    /// Etsitään vastaanottajaa (aloituskehys lähetetty).
+    /// Looking for a receiver (start frame sent).
     Starting { attempt: u32, of: u32 },
-    /// Lähetetään datakehystä.
+    /// Sending a data frame.
     Sending { frame: u32, of: u32, round: u32 },
     WaitingAck,
-    /// Kuittausta ei kuulunut, pyydetään uudelleen.
+    /// No ack was heard, asking again.
     Polling { attempt: u32, of: u32 },
-    /// Vastaanottajalta puuttuu kehyksiä, lähetetään ne uudelleen.
+    /// The receiver is missing frames, resending them.
     Retrying { missing: u32 },
-    /// Toinen kone ehti aloittaa ensin: oma viesti lähtee vastaanoton jälkeen.
+    /// The other machine started first: our message goes out after the reception.
     Deferred,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailReason {
-    /// Kukaan ei vastannut aloitukseen.
+    /// Nobody replied to the start.
     NoReceiver,
-    /// Vastaanottaja lakkasi vastaamasta kesken siirron.
+    /// The receiver stopped replying in the middle of the transfer.
     NoResponse,
-    /// Uudelleenlähetyskierrokset loppuivat.
+    /// The retransmission rounds ran out.
     TooManyRetries,
-    /// Vastaanottaja kuittasi eri sisällön kuin lähetettiin.
+    /// The receiver acknowledged different content than was sent.
     Mismatch,
 }
 
-/// Käytännön neuvo epäonnistumisen syystä, johdettu vastaanottajan laaturaportista.
+/// Practical advice on the cause of the failure, derived from the receiver's quality report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hint {
     None,
@@ -124,9 +124,9 @@ pub enum Hint {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AbortReason {
-    /// Lähettäjästä ei kuulunut enää.
+    /// Nothing more was heard from the sender.
     Timeout,
-    /// Lähettäjä peruutti.
+    /// The sender cancelled.
     Cancelled,
 }
 
@@ -140,22 +140,22 @@ pub enum Event {
     RxProgress { have: u32, of: u32 },
     Received { id: u16, data: Vec<u8> },
     RxAborted { reason: AbortReason },
-    /// Vianetsintäloki.
+    /// Debug log.
     Log(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
-    /// Lähetä tämä kehys fyysisen kerroksen läpi.
+    /// Send this frame through the physical layer.
     Transmit(Vec<u8>),
-    /// Keskeytä käynnissä oleva lähetys heti.
+    /// Abort the transmission in progress immediately.
     AbortTx,
     Event(Event),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SendError {
-    /// Edellinen lähetys on vielä kesken.
+    /// The previous transmission is still in progress.
     Busy,
     TooLong { len: usize, max: usize },
 }
@@ -163,13 +163,13 @@ pub enum SendError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     Listen,
-    /// Väistetään saapuvaa viestiä.
+    /// Yielding to an incoming message.
     Held,
-    /// START lähetetty, odotetaan vastausta.
+    /// START sent, waiting for a reply.
     StartWait,
-    /// Lähetetään ryöppyä; seuraava kehys tällä hetkellä.
+    /// Sending a burst; the next frame at this time.
     Burst { next_at: Ms },
-    /// Ryöppy (tai POLL) lähetetty, odotetaan kuittausta.
+    /// Burst (or POLL) sent, waiting for an ack.
     AckWait,
     Cancelling,
 }
@@ -208,14 +208,14 @@ pub struct Link {
     rng: Rng,
     outgoing: Option<Outgoing>,
     incoming: Option<Incoming>,
-    /// Vastaanottajan roolissa lähetettävä vastaus ja sen lähetyshetki.
+    /// The reply to send in the receiver role and the time to send it.
     reply: Option<(Ms, Frame)>,
-    /// Valmiit viestit: (tunniste, CRC-32, pituus, valmistumishetki).
+    /// Completed messages: (identifier, CRC-32, length, completion time).
     done: VecDeque<(u16, u32, usize, Ms)>,
     actions: VecDeque<Action>,
     in_flight: bool,
     last_sent: Vec<u8>,
-    /// Vastauksen takaraja lähettäjän roolissa.
+    /// Deadline for the reply in the sender role.
     deadline: Ms,
     last_activity: Ms,
     last_tx_done: Ms,
@@ -270,16 +270,16 @@ impl Link {
 
     fn transmit(&mut self, f: Frame) {
         let bytes = f.encode();
-        self.log(format!("-> {} id={:04x} ({} tavua)", f.name(), f.id(), bytes.len()));
+        self.log(format!("-> {} id={:04x} ({} bytes)", f.name(), f.id(), bytes.len()));
         self.last_sent = bytes.clone();
         self.in_flight = true;
         self.deadline = NEVER;
         self.actions.push_back(Action::Transmit(bytes));
     }
 
-    // ---------------------------------------------------------------- käyttäjän toimet
+    // ---------------------------------------------------------------- user actions
 
-    /// Aloita viestin lähetys.
+    /// Start sending a message.
     pub fn send(&mut self, now: Ms, data: &[u8]) -> Result<u16, SendError> {
         if self.outgoing.is_some() {
             return Err(SendError::Busy);
@@ -312,7 +312,7 @@ impl Link {
         Ok(id)
     }
 
-    /// Peruuta käynnissä oleva lähetys.
+    /// Cancel the transmission in progress.
     pub fn cancel(&mut self, _now: Ms) {
         let Some(o) = self.outgoing.as_mut() else { return };
         if o.phase == Phase::Cancelling {
@@ -324,7 +324,7 @@ impl Link {
             self.in_flight = false;
         }
         if sent && !self.in_flight {
-            // Kerrotaan vastaanottajalle, jotta se ei jää odottamaan.
+            // Tell the receiver so that it is not left waiting.
             self.outgoing.as_mut().unwrap().phase = Phase::Cancelling;
             self.transmit(Frame::Cancel { id });
         } else {
@@ -337,26 +337,26 @@ impl Link {
         Frame::decode(&self.last_sent).map_or(false, |f| f.from_sender())
     }
 
-    // ---------------------------------------------------------------- fyysisen kerroksen tapahtumat
+    // ---------------------------------------------------------------- physical layer events
 
     fn activity(&mut self, now: Ms) {
         self.last_activity = self.last_activity.max(now);
-        // Kanava oli varattu kuuntelun aikana: odotetaan satunnainen aika sen vapauduttua.
+        // The channel was busy during listening: wait a random time after it frees up.
         if matches!(self.outgoing.as_ref().map(|o| (o.phase, o.backoff)), Some((Phase::Listen, None))) {
             let r = self.random_backoff();
             self.outgoing.as_mut().unwrap().backoff = Some(r);
         }
     }
 
-    /// Alkumerkki havaittu. Lasketaan vain kanavan varaukseksi: pelkkä alkumerkki
-    /// voi olla väärä hälytys (naksahdus, puhe), joten se ei laukaise kuittausta.
+    /// Preamble detected. Counted only as channel activity: a bare preamble
+    /// can be a false alarm (a click, speech), so it does not trigger an ack.
     pub fn on_preamble(&mut self, now: Ms) {
         self.activity(now);
     }
 
-    /// Kehyksen otsake purkautui, mutta hyötykuorma ei: joku lähettää oikeasti.
-    /// Vastaanoton aikana se tarkoittaa, että ryöppy on käynnissä. Oman
-    /// lähetyksen kaiku suljetaan pois ajan perusteella.
+    /// The frame header decoded but the payload did not: someone really is transmitting.
+    /// During reception it means that a burst is in progress. The echo of our own
+    /// transmission is ruled out by timing.
     pub fn on_rx_failed(&mut self, now: Ms) {
         self.activity(now);
         if !self.in_flight && now >= self.last_tx_done + self.cfg.echo_fallback {
@@ -366,7 +366,7 @@ impl Link {
         }
     }
 
-    /// Oma lähetys on soitettu loppuun (äänen lähtöpuskurin aikajanalla).
+    /// Our own transmission has been played to the end (on the audio output buffer's timeline).
     pub fn on_tx_done(&mut self, now: Ms) {
         if !self.in_flight {
             return;
@@ -396,29 +396,29 @@ impl Link {
         }
     }
 
-    /// Ehjä kehys vastaanotettu. `now` on kehyksen loppuhetki mikrofonin aikajanalla.
+    /// Intact frame received. `now` is the end time of the frame on the microphone's timeline.
     pub fn on_frame(&mut self, now: Ms, bytes: &[u8], quality: Quality) {
         self.activity(now);
         let Some(f) = Frame::decode(bytes) else {
-            self.log(format!("<- tuntematon kehys ({} tavua)", bytes.len()));
+            self.log(format!("<- unknown frame ({} bytes)", bytes.len()));
             return;
         };
         let id = f.id();
         let as_sender = self.outgoing.as_ref().map_or(false, |o| o.id == id);
         let as_receiver = self.incoming.as_ref().map_or(false, |i| i.id == id) || self.done.iter().any(|d| d.0 == id);
 
-        // Oma kaiku: kehystyyppi, jonka vain minä tässä roolissa lähetän.
+        // Own echo: a frame type that only I send in this role.
         if (f.from_sender() && as_sender) || (!f.from_sender() && !as_sender && as_receiver) {
             if bytes == self.last_sent.as_slice() && !self.in_flight && self.deadline != NEVER {
-                // Tarkka ankkuri: ääni lakkasi juuri nyt.
+                // Exact anchor: the sound stopped just now.
                 self.deadline = now + self.cfg.reply_timeout;
             }
-            self.log(format!("<- {} id={id:04x} (oma kaiku)", f.name()));
+            self.log(format!("<- {} id={id:04x} (own echo)", f.name()));
             return;
         }
-        self.log(format!("<- {} id={id:04x} snr={} dB taso={} dBFS", f.name(), quality.snr_db, quality.level_db));
-        // Muu kuin datakehys tarkoittaa, ettei ryöppy ole kesken: sen alkumerkki ei
-        // saa laukaista hiljaisuuteen perustuvaa kuittausta.
+        self.log(format!("<- {} id={id:04x} snr={} dB level={} dBFS", f.name(), quality.snr_db, quality.level_db));
+        // A frame other than a data frame means that no burst is in progress: its preamble must
+        // not trigger the silence-based ack.
         if !matches!(f, Frame::Data { .. }) {
             if let Some(inc) = self.incoming.as_mut() {
                 inc.burst_seen = false;
@@ -468,37 +468,37 @@ impl Link {
         }
     }
 
-    // ---------------------------------------------------------------- vastaanottajan rooli
+    // ---------------------------------------------------------------- receiver role
 
     #[allow(clippy::too_many_arguments)]
     fn rx_start(&mut self, now: Ms, id: u16, len: usize, frames: usize, chunk: usize, crc: u32, inline: Option<Vec<u8>>, q: Quality) {
-        // Jo valmis viesti: loppukuittaus katosi. Kuitataan uudelleen, ei näytetä toista kertaa.
+        // Already completed message: the final ack was lost. Ack again, do not show it a second time.
         if self.done.iter().any(|d| d.0 == id && d.1 == crc && d.2 == len) {
             self.reply = Some((now + self.cfg.response_delay, Frame::Done { id, crc }));
             return;
         }
         if let Some(inc) = self.incoming.as_mut() {
             if inc.id == id {
-                // Aloituksen kuittaus katosi: vastataan uudelleen aloittamatta alusta.
+                // The start ack was lost: reply again without starting over.
                 inc.last_valid = now;
                 self.reply = Some((now + self.cfg.response_delay, Frame::StartAck { id, quality: q }));
             }
-            return; // Vieras aloitus kesken toisen vastaanoton: ohitetaan.
+            return; // A foreign start in the middle of another reception: ignore.
         }
         if len > self.cfg.max_message || chunk == 0 || (inline.is_none() && frames != len.div_ceil(chunk)) {
-            self.log(format!("aloitus hylätty: pituus {len}, kehyksiä {frames}, datakoko {chunk}"));
+            self.log(format!("start rejected: length {len}, frames {frames}, data size {chunk}"));
             return;
         }
-        // Yhtäaikainen lähetys: väistetäänkö?
+        // Simultaneous transmission: do we yield?
         if let Some(o) = self.outgoing.as_mut() {
             let yield_now = match o.phase {
                 Phase::Listen | Phase::Held => true,
-                // Molemmat ehtivät lähettää aloituksen: pienempi tunniste pitää vuoron.
+                // Both managed to send a start: the smaller identifier keeps the turn.
                 Phase::StartWait => id < o.id,
                 _ => false,
             };
             if !yield_now {
-                self.log("vieras aloitus ohitettu: oma lähetys on kesken".into());
+                self.log("foreign start ignored: own transmission is in progress".into());
                 return;
             }
             if self.in_flight {
@@ -512,7 +512,7 @@ impl Link {
         self.event(Event::RxStarted { id, len });
         if let Some(data) = inline {
             if data.len() != len || crc32(&data) != crc {
-                self.log("aloituskehyksen mukana tullut viesti ei täsmää".into());
+                self.log("the message that came with the start frame does not match".into());
                 return;
             }
             self.complete(now, id, crc, data);
@@ -545,14 +545,14 @@ impl Link {
                 inc.burst_seen = true;
             }
         } else if let Some(d) = self.done.iter().find(|d| d.0 == id) {
-            // Viesti on jo valmis, mutta lähettäjä ei tiedä sitä.
+            // The message is already complete, but the sender does not know it.
             if eob {
                 self.reply = Some((now + self.cfg.response_delay, Frame::Done { id, crc: d.1 }));
             }
         }
     }
 
-    /// Kuittaus nykyisestä tilanteesta: DONE, jos viesti on koossa ja ehjä.
+    /// Ack of the current situation: DONE if the message is complete and intact.
     fn make_ack(&mut self, now: Ms, q: Quality) -> Frame {
         let inc = self.incoming.as_mut().unwrap();
         let id = inc.id;
@@ -563,9 +563,9 @@ impl Link {
                 self.complete(now, id, crc, data);
                 return Frame::Done { id, crc };
             }
-            // Jokin kehys läpäisi tarkistuksensa virheellisenä: aloitetaan alusta.
+            // Some frame passed its check while corrupted: start over.
             inc.parts.iter_mut().for_each(|p| *p = None);
-            self.log("koottu viesti ei täsmää tarkistussummaan, pyydetään kaikki uudelleen".into());
+            self.log("assembled message does not match the checksum, requesting everything again".into());
             let n = self.incoming.as_ref().unwrap().parts.len();
             return Frame::Ack { id, quality: q, restart: true, bitmap: vec![0; n.div_ceil(8)] };
         }
@@ -578,7 +578,7 @@ impl Link {
         Frame::Ack { id, quality: q, restart: false, bitmap }
     }
 
-    /// Viesti on perillä: näytä se, muista tunniste ja kuittaa.
+    /// The message has arrived: show it, remember the identifier and ack.
     fn complete(&mut self, now: Ms, id: u16, crc: u32, data: Vec<u8>) {
         self.done.push_back((id, crc, data.len(), now));
         while self.done.len() > self.cfg.done_memory {
@@ -591,7 +591,7 @@ impl Link {
 
     fn end_incoming(&mut self, now: Ms) {
         self.incoming = None;
-        // Väistetty oma viesti pääsee nyt vuoroon.
+        // Our own message that yielded now gets its turn.
         if let Some(o) = self.outgoing.as_mut().filter(|o| o.phase == Phase::Held) {
             o.phase = Phase::Listen;
             o.not_before = now;
@@ -600,7 +600,7 @@ impl Link {
         }
     }
 
-    // ---------------------------------------------------------------- lähettäjän rooli
+    // ---------------------------------------------------------------- sender role
 
     fn start_frame(&self) -> Frame {
         let o = self.outgoing.as_ref().unwrap();
@@ -634,7 +634,7 @@ impl Link {
         }
         let missing = o.acked.iter().filter(|a| !**a).count() as u32;
         if missing == 0 {
-            // Kaikki perillä, mutta loppukuittausta ei tullut: pyydetään se.
+            // Everything delivered, but no final ack came: ask for it.
             self.deadline = now;
             return;
         }
@@ -643,8 +643,8 @@ impl Link {
             self.fail(FailReason::TooManyRetries);
             return;
         }
-        // Ensimmäisen läpikäynnin aikana (kehyskohtainen kuittaus) puuttuvat
-        // kehykset ovat vielä lähettämättä, eivät kadonneita.
+        // During the first pass (per-frame ack) the missing
+        // frames are still unsent, not lost.
         if o.bursts >= first_pass {
             self.event(Event::Tx(TxStatus::Retrying { missing }));
         }
@@ -664,9 +664,9 @@ impl Link {
         self.event(Event::Failed { reason, hint, quality: o.peer });
     }
 
-    // ---------------------------------------------------------------- kello
+    // ---------------------------------------------------------------- clock
 
-    /// Kello eteni. `busy`: fyysinen kerros vastaanottaa parhaillaan kehystä.
+    /// The clock advanced. `busy`: the physical layer is currently receiving a frame.
     pub fn tick(&mut self, now: Ms, busy: bool) {
         if busy {
             self.activity(now);
@@ -675,7 +675,7 @@ impl Link {
             self.done.pop_front();
         }
 
-        // Vastaanottaja: ajastettu vastaus.
+        // Receiver: scheduled reply.
         if !self.in_flight {
             if let Some((at, _)) = self.reply {
                 if now >= at {
@@ -685,17 +685,17 @@ impl Link {
             }
         }
 
-        // Vastaanottaja: ryöppy loppui ilman "viimeinen kehys" -lippua.
+        // Receiver: the burst ended without the "last frame" flag.
         if let Some(inc) = self.incoming.as_mut() {
             if inc.burst_seen && !busy && !self.in_flight && self.reply.is_none() && now.saturating_sub(self.last_activity) >= self.cfg.quiet_ack {
                 inc.burst_seen = false;
                 let reply = self.make_ack(now, Quality::default());
-                self.log("ryöppy päättyi ilman loppumerkkiä, kuitataan".into());
+                self.log("burst ended without the end flag, acking".into());
                 self.reply = Some((now, reply));
             }
         }
 
-        // Vastaanottaja: lähettäjä katosi.
+        // Receiver: the sender disappeared.
         if let Some(inc) = self.incoming.as_ref() {
             if !busy && now.saturating_sub(inc.last_valid.max(self.last_activity)) >= self.cfg.rx_timeout {
                 self.end_incoming(now);
@@ -733,7 +733,7 @@ impl Link {
                 }
             }
             Phase::StartWait | Phase::AckWait => {
-                // Jos vastaus on parhaillaan tulossa, odotetaan se loppuun.
+                // If a reply is arriving right now, wait for it to finish.
                 if self.in_flight || busy || now < self.deadline {
                     return;
                 }
@@ -741,14 +741,14 @@ impl Link {
                     if o.start_attempts >= self.cfg.start_tries {
                         self.fail(FailReason::NoReceiver);
                     } else {
-                        // Ehkä törmäys toisen aloituksen kanssa: satunnainen odotus rikkoo symmetrian.
+                        // Perhaps a collision with another start: a random wait breaks the symmetry.
                         let r = self.random_backoff();
                         let o = self.outgoing.as_mut().unwrap();
                         o.phase = Phase::Listen;
                         o.not_before = now + r;
                         o.backoff = None;
                         self.deadline = NEVER;
-                        self.log(format!("aloitukseen ei vastattu, uusi yritys {r} ms kuluttua"));
+                        self.log(format!("no reply to start, retrying in {r} ms"));
                     }
                 } else if o.polls >= self.cfg.poll_tries {
                     self.fail(FailReason::NoResponse);

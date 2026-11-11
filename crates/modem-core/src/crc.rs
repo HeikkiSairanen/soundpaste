@@ -1,13 +1,13 @@
-//! Tarkistussummat.
+//! Checksums.
 //!
-//! - CRC-16/CCITT-FALSE (polynomi 0x1021, alkuarvo 0xFFFF): kehyksen eheys.
-//!   Havaitsee kaikki enintään 16 bitin ryöppyvirheet ja kaikki 1–3 bitin virheet
-//!   meidän kehyspituuksillamme.
-//! - CRC-32 (IEEE 802.3, heijastettu 0xEDB88320): koko viestin eheys.
-//! - CRC-8 (polynomi 0x07): lyhyet otsakkeet.
+//! - CRC-16/CCITT-FALSE (polynomial 0x1021, initial value 0xFFFF): frame integrity.
+//!   Detects all burst errors of at most 16 bits and all 1–3 bit errors
+//!   at our frame lengths.
+//! - CRC-32 (IEEE 802.3, reflected 0xEDB88320): integrity of the whole message.
+//! - CRC-8 (polynomial 0x07): short headers.
 //!
-//! Toteutus on bitti kerrallaan: kehykset ovat kymmeniä tavuja, joten
-//! taulukko ei toisi mitattavaa hyötyä ja veisi wasm-binääristä tilaa.
+//! The implementation is bit by bit: frames are tens of bytes, so a
+//! table would bring no measurable benefit and would take space in the wasm binary.
 
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
@@ -46,7 +46,7 @@ pub fn crc8(data: &[u8]) -> u8 {
 mod tests {
     use super::*;
 
-    // Tunnetut tarkistusarvot merkkijonolle "123456789".
+    // Known check values for the string "123456789".
     #[test]
     fn check_values() {
         assert_eq!(crc16(b"123456789"), 0x29B1);
