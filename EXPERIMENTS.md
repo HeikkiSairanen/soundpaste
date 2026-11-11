@@ -90,3 +90,67 @@ konetta arvioidaan johdetulla profiililla `:kaukana` (suora ääni -14 dB).
 
 **Perustaso** päivitetty: `bench/results/20261111T081049Z-b1d2c55-muutoksia-v0-bfsk.json`
 (mukana mitatut kanavat, korpus 4/5).
+
+## 2. v1: moniääni-MFSK, sävelhyppy, pyyhkäisyalkumerkki, Reed–Solomon (2026-11-11)
+
+**Hypoteesi.** DESIGN.md:n aaltomuoto (16 × 4-FSK, hyppy 4 ryhmää, 40 + 10 ms,
+pyyhkäisy + suhteellinen kynnys, RS pariteetilla 1/2) lyhentää 60 merkin
+kehyksen noin 1,5 sekuntiin ja toimii kaikuisassa huoneessa, jossa v0 ei
+toimi lainkaan.
+
+**Tulos** (`bench/results/20261111T083553Z-d9cbeba-muutoksia-v1.json`):
+
+| mittari | v0 | v1 |
+|---|---|---|
+| siirtoaika, 60 merkin kehys | 5,54 s | 1,44 s |
+| onnistuminen nimellisoloissa | 86,3 % | 94,7 % (100 % ilman uutta halli-profiilia) |
+| alin SNR, huone | +21 dB | -6 dB |
+| alin SNR, kaikuisa (RT60 0,8 s) | ei yllä | -3 dB |
+| nettonopeus | 10,8 tavua/s | 41,7 tavua/s |
+| korjatut tavut / kehys nimellisoloissa | – | 0,7 (kapasiteetti 16) |
+| oikea ääni Macilla, amplitudit 1,0…0,01 | 4/5 | 5/5 |
+
+Hypoteesi piti. Marginaalia on nimellisoloissa paljon: virheenkorjauksesta
+käytetään alle 5 %.
+
+**Vika matkan varrella: alkumerkki laukesi sivukeilasta.** Ensimmäinen
+versio epäonnistui mitatuilla kanavilla juuri silloin, kun kohinaa oli
+vähiten (SNR 24–30 dB: 42–83 %). Syy: kun tausta on lähes äänetön,
+suhteellinen kynnys ylittyy jo pyyhkäisyn autokorrelaation sivukeilasta
+kymmeniä millisekunteja ennen päähuippua, ja huipun haku katsoi vain 15 ms
+eteenpäin. Korjaus: kynnyksen ylityksestä haetaan voimakkain huippu yhden
+alkumerkin mitan päähän asti. Tämän jälkeen mitatut kanavat 100 % kaikilla tasoilla.
+Opetus: "liian hyvä" signaali on oma testitapauksensa.
+
+**Uudet profiilit**, koska vanhat eivät enää erotelleet versioita: `kolahdus`
+(kolme iskua kehyksen aikana), `puhe` (0,5 s puheen kaltaista häiriötä) ja
+`halli` (RT60 1,2 s, kaiku 5 dB suoraa ääntä voimakkaampi).
+
+**Muunnelmat** (sama mittaristo, alin SNR / onnistuminen):
+
+| muunnelma | kaikuisa | halli (SNR >= 12 dB) | muuta | päätös |
+|---|---|---|---|---|
+| v1 (perus, pyyhkiytymät päällä) | -3 dB | 8–33 % | | **valittu** |
+| `v1-noera`: ei pyyhkiytymiä | 0 dB | | muuten sama | hylätty: pyyhkiytymät ovat ilmainen 3 dB reunalla |
+| `v1-8x20`: 8 alikanavaa, 20 + 5 ms | -3 dB | 0–8 % | sama nopeus | hylätty: pitkä symboli kestää pitkän kaiun paremmin |
+| `v1-g2`: hyppy 2 ryhmää | +27 dB | 0 % | puolet kaistasta | hylätty: vahvistaa vertailukokeen tuloksen |
+| `v1-time`: tavu = peräkkäiset symbolit | 0 dB | | kolahdus sama | hylätty: ei hyötyä, kaikuisassa hieman huonompi |
+| `v1-p3`: pariteetti 1/3 | 0 dB | 0–25 % | 1,29 s; puhe -3 dB | hylätty toistaiseksi: 10 % nopeampi mutta 3 dB herkempi |
+
+**Missä raja kulkee.**
+- Kohina: noin -6 dB koko kaistan SNR:llä (puhtaalla kanavalla -9 dB).
+- Kaiku: RT60 0,8 s ja suora/kaiku 0 dB toimii. `halli` (RT60 1,2 s, suora
+  ääni 5 dB kaikua heikompi) ei toimi: alkumerkki ja otsake menevät läpi,
+  mutta hyötykuorman virheet ylittävät Reed–Solomonin kapasiteetin (esim.
+  18 korjattavaa, kun raja on noin 16). Uudelleenlähetys ei auta, koska kanava
+  ei muutu. Tämä on se tapaus, johon DESIGN.md:n luvun 7 kestävä tila
+  (pidemmät symbolit, enemmän pariteettia) olisi tarkoitettu.
+- Kolahdukset ja puheen kaltainen häiriö eivät simulaatiossa kaada kehystä
+  vielä -6 dB:n tasollakaan. Profiilit voivat olla liian helppoja; oikea puhe
+  ja oikeat kolahdukset testataan kehässä E.
+- Väärät hälytykset: taajuuspyyhkäisy (kanavamittaus) ja v0:n äänet
+  laukaisevat alkumerkin kerran pari per äänite, mutta otsakkeen tarkistus
+  hylkää ne 0,2 sekunnissa. Valkoinen kohina (20 s) ei laukaise kertaakaan.
+
+**Testattu:** simulaatio (15 profiilia) ja oikea ääni Macin kaiuttimesta omaan
+mikrofoniin (5 äänitettä korpuksessa). Ei vielä kahden koneen välillä.

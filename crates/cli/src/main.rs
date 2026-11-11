@@ -88,7 +88,7 @@ pub fn phy_arg(a: &Args) -> Result<PhyKind, String> {
     match a.str("phy") {
         None => Ok(PhyKind::DEFAULT),
         Some(s) => PhyKind::from_name(s).ok_or_else(|| {
-            format!("tuntematon aaltomuoto '{s}', vaihtoehdot: {}", PhyKind::ALL.iter().map(|k| k.name()).collect::<Vec<_>>().join(", "))
+            format!("tuntematon aaltomuoto '{s}', vaihtoehdot: {}", PhyKind::all().iter().map(|k| k.name()).collect::<Vec<_>>().join(", "))
         }),
     }
 }

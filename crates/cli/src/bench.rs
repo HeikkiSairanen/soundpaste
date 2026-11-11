@@ -13,7 +13,7 @@ use crate::corpus::{self, CorpusScore};
 use crate::json::Json;
 use modem_core::phy::{bit_errors, PhyEvent, PhyKind};
 use modem_core::rng::Rng;
-use modem_core::sim::{run_oneway, synth_ir, NoiseKind, OneWay};
+use modem_core::sim::{run_oneway, synth_ir, Interference, InterferenceKind, NoiseKind, OneWay};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -61,6 +61,11 @@ pub fn synthetic_profiles() -> Vec<Profile> {
             c.ir = room(48000.0, 0.8, 0.0, seed);
             c
         }),
+        p("halli", "RT60 1,2 s, DRR -5 dB: kaiku selvästi suoraa ääntä voimakkaampi", move |snr, seed| {
+            let mut c = base(snr, seed);
+            c.ir = room(48000.0, 1.2, -5.0, seed);
+            c
+        }),
         p("huonemelu", "huone + vaaleanpunainen (matalapainotteinen) kohina", move |snr, seed| {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
@@ -91,6 +96,22 @@ pub fn synthetic_profiles() -> Vec<Profile> {
             let mut c = base(snr, seed);
             c.ir = room(48000.0, 0.35, 8.0, seed);
             c.rx_level = 0.0005;
+            c
+        }),
+        p("kolahdus", "huone + kolme kolahdusta kehyksen aikana (huippu 14 dB signaalia voimakkaampi)", move |snr, seed| {
+            let mut c = base(snr, seed);
+            c.ir = room(48000.0, 0.35, 8.0, seed);
+            let mut rng = Rng::new(seed ^ 0xC11C);
+            c.interference = (0..3)
+                .map(|_| Interference { kind: InterferenceKind::Click, start_s: c.lead_s + rng.range(0.15, 1.2), duration_s: 0.08, rms: 0.5 })
+                .collect();
+            c
+        }),
+        p("puhe", "huone + 0,5 s puheen kaltaista häiriötä kehyksen aikana (6 dB signaalia voimakkaampi)", move |snr, seed| {
+            let mut c = base(snr, seed);
+            c.ir = room(48000.0, 0.35, 8.0, seed);
+            let mut rng = Rng::new(seed ^ 0x5BEE);
+            c.interference = vec![Interference { kind: InterferenceKind::Babble, start_s: c.lead_s + rng.range(0.1, 0.7), duration_s: 0.5, rms: 0.2 }];
             c
         }),
     ]
