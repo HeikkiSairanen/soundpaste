@@ -1,0 +1,8 @@
+[package]
+name = "modem-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "soundpaste-äänimodeemin ydin: fyysinen kerros, linkkikerros ja kanavasimulaattori. Ei riippuvuuksia."
+
+[dependencies]

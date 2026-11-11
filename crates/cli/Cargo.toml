@@ -1,0 +1,12 @@
+[package]
+name = "soundpaste-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "soundpaste"
+path = "src/main.rs"
+
+[dependencies]
+modem-core = { path = "../modem-core" }

@@ -1,0 +1,6 @@
+/target
+.DS_Store
+.julkaisu
+/dist
+/tmp
+*.swp
