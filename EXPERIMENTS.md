@@ -206,3 +206,30 @@ pikalähetys oletukseksi.** Perustaso päivitetty:
 
 **Testattu:** vain simulaatiossa (kehystaso: 33 testiä; äänitaso: 8 sessiotestiä
 ja mittausajo). Linkkikerrosta ei ole vielä ajettu oikealla äänellä.
+
+## 4. Kehä D: CLI ja selain samalla Macilla oikealla äänellä (2026-11-11)
+
+**Tarkoitus.** Varmistaa wasm-kääre, AudioWorklet-liima ja linkkikerros
+oikealla äänellä ennen toista konetta. Macin CLI (`soundpaste live`, ääni
+SoX:n kautta) ja Chromen sivu jakavat saman kaiuttimen ja mikrofonin.
+
+| testi | tulos |
+|---|---|
+| CLI -> selain, 60 merkin linkki (pikalähetys) | perillä 2,59 s, ei korjattavia tavuja |
+| selain -> CLI, 43 tavua ääkkösin ja emojein | perillä 2,2 s (selaimen kello) |
+| CLI -> selain, 300 tavua (kättely + 5 kehyksen ryöppy) | perillä 9,96 s, 5 korjattua tavua |
+| wasm-moduulin vaihto lennossa kahdesti | mikrofoni pysyi päällä, siirto toimi vaihdon jälkeen (1,74 s) |
+
+**Havainnot.**
+- Kaikki toimi ensimmäisellä yrityksellä. Simulaation arviot (2,8 s ja noin
+  10 s) osuivat oikeaan; oikea ääni oli hieman nopeampi, koska Chromen
+  ilmoittama lähtöviive on vain noin 5 ms.
+- Chrome kytki puheenkäsittelyn pois pyydetysti (kaiunpoisto,
+  kohinanvaimennus ja automaattinen taso: false).
+- Oma kaiku tunnistettiin molemmissa päissä, vaikka kaksi asemaa jakaa saman
+  kaiuttimen.
+- Selaimen mittaama SNR oli 23–30 dB ja taso -39 dBFS järjestelmän
+  äänenvoimakkuudella 44 %.
+
+**Rajaus.** Tämä on edelleen yhden laitteen kaiutin ja mikrofoni. Kahden
+koneen välistä kanavaa (kehä E) ei ole vielä ajettu.

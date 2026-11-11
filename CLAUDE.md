@@ -36,6 +36,12 @@ cargo build --release -q
 ./target/release/soundpaste corpus [--holdout]  # korpuksen listaus ja regressioajo (kehä B)
 ./target/release/soundpaste bench --holdout     # mukaan vertailuaineisto (vain vaiheiden lopussa)
 ./target/release/soundpaste explore             # modulaatiovaihtoehtojen vertailu (noin 3 min)
+
+# Selain ja kaksi konetta (README.md, kehät D ja E)
+./rakenna.sh                                    # CLI + wasm + dist/
+./target/release/soundpaste serve               # kehityspalvelin, http://localhost:8787/
+./target/release/soundpaste live --send "x"     # asema oikealla äänellä (kysy lupa äänelle)
+./target/release/soundpaste remote tila         # testiasemien tila; remote laheta/tila kaiku/keraa N
 ```
 
 Älä putkita `measure`- tai `acoustic`-komentoa `head`:iin: katkennut putki
@@ -60,7 +66,9 @@ kaataa ohjelman ennen tallennusta.
 
 ## Nykytila
 
-- Vaiheet 1–5 valmiit. Oletusaaltomuoto `v1` (16 × 4-FSK, sävelhyppy, pyyhkäisyalkumerkki,
+- Vaiheet 1–8 on toteutettu; kehä E (PC-testiasema) ja julkaisu odottavat käyttäjää.
+  Kehä D (CLI + selain samalla Macilla) on ajettu oikealla äänellä.
+- Oletusaaltomuoto `v1` (16 × 4-FSK, sävelhyppy, pyyhkäisyalkumerkki,
   Reed–Solomon), linkkikerros (`link/`), asema (`station.rs`) ja kaksisuuntainen
   simulaatio (`sim/duplex.rs`).
 - Perustaso `bench/baseline.json`: sessiotila, 60 merkin linkki 2,82 s, onnistuminen
