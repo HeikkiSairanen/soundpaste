@@ -14,3 +14,4 @@ pub mod wav;
 pub mod phy;
 pub mod sim;
 pub mod measure;
+pub mod rs;

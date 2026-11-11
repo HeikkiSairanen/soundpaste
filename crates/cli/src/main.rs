@@ -6,6 +6,7 @@ mod audio;
 mod bench;
 mod compare;
 mod corpus;
+mod explore;
 mod json;
 
 use args::Args;
@@ -31,6 +32,7 @@ Mittaus:
   compare [uusi.json] [--baseline bench/baseline.json]    Vertaa ajoa perustasoon
   baseline [ajo.json]                                     Aseta ajo (oletus: uusin) perustasoksi
   profiles                                                Listaa kanavaprofiilit
+  explore [--seeds 6] [--seconds 6] [--clip]              Modulaatiovaihtoehtojen vertailukoe
 
 Oikea ääni (Mac, SoX). Valinta --sim <profiili> ajaa saman hiljaa simulaattorilla.
   audio-test [--seconds 2]                                Äänitä hetki ja näytä taso (ei soita mitään)
@@ -60,6 +62,7 @@ fn main() -> ExitCode {
         "analyze" => acoustic::cmd_analyze(rest),
         "acoustic" => acoustic::cmd_acoustic(rest),
         "corpus" => acoustic::cmd_corpus(rest),
+        "explore" => explore::cmd_explore(rest),
         "profiles" => {
             for p in bench::synthetic_profiles().into_iter().chain(bench::measured_profiles(true)) {
                 println!("{:<34} {}{}", p.name, p.desc, if p.holdout { " (vertailuaineisto)" } else { "" });
