@@ -26,16 +26,16 @@ fn sim_record(tx: &[f32], profile: &str, pre_s: f64, level: f32) -> Result<Vec<f
 }
 
 /// Äänitä, valinnaisesti säätäen järjestelmän äänenvoimakkuutta toiston ajaksi.
-fn capture(a: &Args, tx: &[f32], fs: u32, level: f32) -> Result<(Vec<f32>, Option<u32>), String> {
+fn capture(a: &Args, tx: &[f32], fs: u32, level: f32, pre_s: f64) -> Result<(Vec<f32>, Option<u32>), String> {
     if let Some(profile) = a.str("sim") {
-        return Ok((sim_record(tx, profile, 0.7, level)?, None));
+        return Ok((sim_record(tx, profile, pre_s, level)?, None));
     }
     let before = audio::system_volume();
     let wanted: Option<u32> = a.str("volume").map(|v| v.parse().map_err(|_| "--volume: anna luku 0–100".to_string())).transpose()?;
     if let Some(v) = wanted {
         audio::set_system_volume(v);
     }
-    let result = audio::play_and_record(tx, fs, 0.7, 0.6);
+    let result = audio::play_and_record(tx, fs, pre_s, 0.6);
     if let (Some(_), Some(b)) = (wanted, before) {
         audio::set_system_volume(b);
     }
@@ -99,7 +99,11 @@ pub fn print_measurement(m: &ChannelMeasurement) {
         m.delay_spread_s * 1e3,
         1.0 / (5.0 * m.delay_spread_s.max(1e-6))
     );
-    println!("  toinen harmoninen särö: {:.0} dB", m.thd2_db);
+    if m.thd2_db.is_finite() {
+        println!("  toinen harmoninen särö: {:.0} dB", m.thd2_db);
+    } else {
+        println!("  toinen harmoninen särö: kohinapohjan alla");
+    }
     // Milloin oma kaiku on vaimennut 20/40/60 dB huipusta (10 ms ikkunan teho).
     let win = (0.010 * m.fs) as usize;
     let power = |i: usize| m.ir[i..(i + win).min(m.ir.len())].iter().map(|v| (*v as f64).powi(2)).sum::<f64>();
@@ -111,6 +115,16 @@ pub fn print_measurement(m: &ChannelMeasurement) {
             Some(i) => format!("  -{target:.0} dB @ {:.0} ms", i as f64 / m.fs * 1e3),
             None => format!("  -{target:.0} dB ei saavutettu"),
         };
+    }
+    println!("{line}");
+    // Kuinka suuri osa energiasta saapuu myöhemmin kuin t suoran äänen jälkeen.
+    // Tämä on symbolien välisen häiriön taso, jos seuraava symboli alkaa hetkellä t.
+    let total: f64 = m.ir.iter().map(|v| (*v as f64).powi(2)).sum();
+    let mut line = String::from("  energia viiveen jälkeen:");
+    for t_ms in [2.5, 5.0, 10.0, 20.0, 40.0] {
+        let from = (m.ir_pre + (t_ms * 1e-3 * m.fs) as usize).min(m.ir.len());
+        let late: f64 = m.ir[from..].iter().map(|v| (*v as f64).powi(2)).sum();
+        line += &format!("  >{t_ms} ms: {:.0} dB", 10.0 * (late / total).max(1e-30).log10());
     }
     println!("{line}");
     println!("  {:>9} {:>10} {:>12} {:>12}", "kaista Hz", "vahvistus", "melu/50 Hz", "sävelen SNR");
@@ -169,7 +183,8 @@ pub fn cmd_measure(raw: &[String]) -> Result<ExitCode, String> {
     let label = a.str_or("label", "mac");
     let id = format!("{}-{}-g{:03.0}", bench::utc_now(), label, sweep.amplitude * 100.0);
     println!("KANAVAMITTAUS {id}: pyyhkäisy {:.0}–{:.0} Hz, {:.1} s, amplitudi {}", sweep.f1, sweep.f2, sweep.duration_s, sweep.amplitude);
-    let (rec, volume) = capture(&a, &tx, fs, 0.05)?;
+    // Pitkä hiljainen alku: siitä saadaan useampi sekunti huoneen taustamelua.
+    let (rec, volume) = capture(&a, &tx, fs, 0.05, 3.0)?;
     let m = measure::analyze(&rec, fs as f64, &sweep)?;
     print_measurement(&m);
     if !a.has("no-save") {
@@ -209,7 +224,7 @@ pub fn cmd_acoustic(raw: &[String]) -> Result<ExitCode, String> {
     let mut ok_count = 0;
     for &g in &gains {
         let tx: Vec<f32> = clean.iter().map(|v| v * g).collect();
-        let (rec, volume) = capture(&a, &tx, fs, 0.1 * g)?;
+        let (rec, volume) = capture(&a, &tx, fs, 0.1 * g, 0.7)?;
         let w = wav::Wav { sample_rate: fs, samples: rec };
         let r = corpus::decode_expect(kind, &w, text.as_bytes());
         ok_count += r.ok as u32;

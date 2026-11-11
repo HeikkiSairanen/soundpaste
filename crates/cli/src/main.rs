@@ -147,6 +147,23 @@ fn cmd_decode(raw: &[String]) -> Result<ExitCode, String> {
     }
     println!("{path}: {:.2} s, {} Hz, {}", w.samples.len() as f64 / w.sample_rate as f64, w.sample_rate, kind.name());
     let frames = print_events(&events, w.sample_rate as f64);
+    // --expect "teksti": näytä, missä kohdissa koodattua kehystä bittivirheet ovat.
+    if let Some(expect) = a.str("expect") {
+        let coded = kind.modulator(w.sample_rate as f64).coded(expect.as_bytes());
+        for ev in &events {
+            let raw = match ev {
+                PhyEvent::Frame { raw, .. } | PhyEvent::Failed { raw, .. } => raw,
+                _ => continue,
+            };
+            let (errors, bits) = modem_core::phy::bit_errors(&coded, raw);
+            let map: String = (0..coded.len()).map(|i| match raw.get(i) {
+                None => '?',
+                Some(b) if *b == coded[i] => '.',
+                Some(b) => char::from_digit((b ^ coded[i]).count_ones(), 10).unwrap_or('#'),
+            }).collect();
+            println!("bittivirheitä {errors}/{bits} (pituus {} vs {}), tavukartta: {map}", raw.len(), coded.len());
+        }
+    }
     if frames == 0 {
         println!("ei ehjiä kehyksiä");
         return Ok(ExitCode::from(1));

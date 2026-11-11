@@ -64,8 +64,12 @@ pub fn play_and_record(tx: &[f32], fs: u32, pre_s: f64, post_s: f64) -> Result<V
     check_tools()?;
     let tx_path = tmp("tx.wav");
     let rec_path = tmp("rec.wav");
-    std::fs::write(&tx_path, wav::encode_pcm16(fs, tx)).map_err(|e| e.to_string())?;
-    let tx_dur = tx.len() as f64 / fs as f64;
+    // Hiljaisuutta molempiin päihin: toistotyökalu voi katkaista äänen aivan lopusta
+    // (viimeinen puskuri jää soittamatta) ja äänilaitteen herääminen voi syödä alun.
+    let pad = vec![0.0f32; (0.3 * fs as f64) as usize];
+    let padded: Vec<f32> = pad.iter().chain(tx).chain(&pad).copied().collect();
+    std::fs::write(&tx_path, wav::encode_pcm16(fs, &padded)).map_err(|e| e.to_string())?;
+    let tx_dur = padded.len() as f64 / fs as f64;
     // Varataan toiston käynnistymiselle reilusti aikaa; äänite leikataan analyysissä.
     let total = pre_s + tx_dur + post_s + 1.0;
     let rec = rec_command(&rec_path, fs, total).spawn().map_err(|e| format!("rec: {e}"))?;

@@ -225,7 +225,11 @@ pub fn analyze(rec: &[f32], fs: f64, sweep: &Sweep) -> Result<ChannelMeasurement
     let thd2_db = if peak > lead2 + ms(10.0) {
         let c = peak - lead2;
         let e2 = energy(&h[c - ms(5.0)..c + ms(15.0)]) - floor_power * ms(20.0) as f64;
-        10.0 * (e2.max(1e-30) / energy(&h[peak - pre..peak + ms(15.0)])).log10()
+        if e2 > 0.0 {
+            10.0 * (e2 / energy(&h[peak - pre..peak + ms(15.0)])).log10()
+        } else {
+            f64::NAN // särö jää kohinapohjan alle
+        }
     } else {
         f64::NAN
     };

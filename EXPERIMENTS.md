@@ -41,3 +41,52 @@ kehys.
   virheenkorjausta ei ole.
 - Seuraavat kokeilut (vaihe 4): useampi taajuus ja taajuuden vaihto symbolien
   välillä kaikua vastaan, Reed-Solomon, parempi tahdistus.
+
+## 1. Oikea ääni Macilla: kanavamittaus ja v0 kaiuttimesta mikrofoniin (2026-11-11)
+
+**Tarkoitus.** Saada kehät B ja C pyörimään ja mitata kanava ennen
+suunnittelupäätöksiä. Laite: MacBook Pro (MacBookPro17,1), omat kaiuttimet ja
+oma mikrofoni, järjestelmän äänenvoimakkuus 44 %, työhuone.
+
+**Kanavamittaus** (`soundpaste measure`, pyyhkäisy 100 Hz – 20 kHz, kolme
+amplitudia 1,0 / 0,3 / 0,1; hiljaisin on vertailuaineistoa):
+
+| suure | arvo | merkitys |
+|---|---|---|
+| vahvistus 1–8 kHz | -25…-33 dB, tasainen ±4 dB | käyttökelpoinen kaista |
+| vahvistus 10–20 kHz | -37…-42 dB | noin 12 dB heikompi, mutta toimii 20 kHz:iin asti |
+| taustamelu / 50 Hz | -78 dBFS @ 200 Hz, -98 @ 1 kHz, -105 @ 2–8 kHz | melu on matalilla taajuuksilla |
+| suora ääni / kaiku | 11–12 dB | oma mikrofoni on aivan kaiuttimen vieressä |
+| viivehaje | 3–4 ms, koherenssikaista noin 50–70 Hz | kanava on taajuusvalikoiva jo omassa koneessa |
+| energia > 10 / 20 / 40 ms suoran äänen jälkeen | -14 / -20 / -27 dB | symbolien välinen häiriö |
+| oma kaiku kohinapohjassa (-55 dB) | 62 ms | suoja-ajan mitoitus |
+| toinen harmoninen särö | -40 dB (amplitudi 1,0), yhdessä mittauksessa -24 dB | rajoittaa tiheitä konstellaatioita |
+
+RT60-arvio (0,05–0,17 s) ei ole luotettava: kaiun häntä hukkuu taustameluun
+ennen kuin se on vaimennut 25 dB, koska suora ääni on niin hallitseva.
+Mittaus kuvaa oman kaiun polkua, ei toisen koneen kuulemaa kanavaa. Toista
+konetta arvioidaan johdetulla profiililla `:kaukana` (suora ääni -14 dB).
+
+**v0 oikealla äänellä** (`soundpaste acoustic`, viisi voimakkuutta):
+
+| amplitudi | 1,0 | 0,3 | 0,1 | 0,03 | 0,01 |
+|---|---|---|---|---|---|
+| tulos | ok | ok | ok | ok | ei havaittu |
+
+**Havainnot.**
+- Ensimmäisellä yrityksellä kolme neljästä epäonnistui, ja virhe oli joka
+  kerta kehyksen viimeisessä bitissä: SoX:n `play` katkaisee äänen lopusta.
+  Korjaus on mittaustyökalussa (hiljaisuutta toiston molempiin päihin), mutta
+  opetus koskee myös modeemia: kehyksen viimeinen symboli ei saa olla
+  viimeinen asia, jonka kaiutin soittaa.
+- Signaalin taso mikrofonissa on matala (-33 dBFS täydellä amplitudilla),
+  eli leikkautuminen ei ole tällä laitteella ongelma, mutta tasosta
+  riippumaton ilmaisu on välttämätön.
+- Mitatulla kanavalla ja mitatulla melulla v0 toimii vielä -15 dB:n
+  SNR:llä, koska melu on kaistan ulkopuolella. Koko kaistan SNR on siis
+  huono mittari oikealle huoneelle, ja kaistan valinta ratkaisee paljon.
+- Johdetulla `:kaukana`-profiililla v0 jää 50–60 %:iin tasosta
+  riippumatta: kaiku kaataa sen, kuten synteettisissäkin huoneissa.
+
+**Perustaso** päivitetty: `bench/results/20261111T081049Z-b1d2c55-muutoksia-v0-bfsk.json`
+(mukana mitatut kanavat, korpus 4/5).

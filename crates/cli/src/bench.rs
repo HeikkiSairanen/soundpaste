@@ -437,23 +437,29 @@ impl Scoreboard {
             println!("  VÄÄRIÄ KEHYKSIÄ LÄPI              {:>8}   (tarkistussumma petti!)", self.false_frames);
         }
         println!();
-        print!("  onnistuminen %  SNR dB:");
+        print!("  onnistuminen %      SNR dB:");
         for s in SNR_GRID {
             print!("{s:>4.0}");
         }
         println!("   alin SNR");
         for p in &self.profiles {
-            let mut label = format!("{}{}", p.name.replace("mitattu:", "m:"), if p.holdout { " (vert.)" } else { "" });
-            if label.chars().count() > 22 {
-                // Pitkät mitattujen kanavien nimet: jätetään aikaleiman päivämäärä pois.
-                label = label.chars().rev().take(22).collect::<Vec<_>>().into_iter().rev().collect();
-            }
-            print!("  {label:<22}");
+            let label = format!("{}{}", short_name(&p.name), if p.holdout { " (vert.)" } else { "" });
+            print!("  {label:<26}");
             for pt in &p.points {
                 print!("{:>4.0}", pt.success() * 100.0);
             }
             println!("   {}", snr(p.min_snr()));
         }
+    }
+}
+
+/// Mitatun kanavan lyhyt nimi taulukkoon: `mitattu:20261111T080523Z-mac-g100:kaukana`
+/// -> `m:0805-mac-g100:kaukana` (kellonaika riittää erottamaan saman päivän mittaukset).
+pub fn short_name(name: &str) -> String {
+    match name.strip_prefix("mitattu:") {
+        Some(rest) if rest.len() > 17 && rest.as_bytes()[8] == b'T' && rest.as_bytes()[15] == b'Z' => format!("m:{}{}", &rest[9..13], &rest[16..]),
+        Some(rest) => format!("m:{rest}"),
+        None => name.to_string(),
     }
 }
 
