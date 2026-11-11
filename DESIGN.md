@@ -1,6 +1,6 @@
 # soundpaste: suunnitelma
 
-Tila: **ehdotus, odottaa kommentteja** (vaihe 3). Perustuu vaiheiden 1–2
+Tila: **hyväksytty lähtökohdaksi 2026-11-11** (kestävä tila jätetään pois ensimmäisestä versiosta, ks. luku 7). Perustuu vaiheiden 1–2
 mittauksiin (ks. `EXPERIMENTS.md`). Fyysisen kerroksen parametrit ovat
 lähtöarvoja, jotka vaiheen 4 parannussykli vahvistaa tai kumoaa.
 
@@ -430,6 +430,22 @@ Näitä ei toteuteta nyt, mutta rakenne ei sulje niitä pois:
   eri kaistalla), eli vastaanottimeen tulee toinen ilmaisin rinnalle.
   `PhyKind` ja sävelristikon parametrit (alataajuus, sävelväli, alikanavien
   määrä) on tehty tätä varten.
+- **Kestävä tila kovaan meluun:** ensimmäisessä versiossa ei ole hitaampaa
+  varatilaa (päätös 2026-11-11: kokeillaan ilman ja lisätään, jos käytäntö
+  vaatii). Lisääminen on mahdollista kolmen rakenneratkaisun ansiosta:
+  1. Aaltomuodon kaikki parametrit (sävelten ja alikanavien määrä, symbolin
+     pituus, pariteetin osuus, alkumerkki) ovat yhdessä rakenteessa
+     (`MfskParams`), ja jokainen parametrijoukko on oma `PhyKind`-arvonsa.
+     Kestävä tila on uusi rivi taulukossa, esimerkiksi 8 alikanavaa, 80 ms:n
+     symbolit ja pariteettia yhtä paljon kuin dataa.
+  2. Koska aloitus- ja kuittauskehysten pitää kestää vähintään yhtä hyvin
+     kuin datan, kestävä tila tarvitsee oman alkumerkkinsä (esim. laskeva
+     pyyhkäisy), josta vastaanotin tunnistaa myös otsakkeen modulaation.
+     Vastaanotin voi ajaa useaa ilmaisinta rinnakkain; sama mekanismi
+     palvelee lähes kuulumatonta tilaa.
+  3. Linkkikerros saa jokaisen kehyksen mukana tiedon tilasta ja antaa tilan
+     jokaiselle lähetettävälle kehykselle, joten se voi vaihtaa tilaa
+     laaturaportin tai epäonnistuneiden kierrosten perusteella.
 - **Nopeuden sovitus:** START_ACK- ja ACK-kehysten laatutavut ovat jo
   protokollassa.
 - **Salaus:** kehyksen lippu 3 on varattu. Salaus koskisi DATA-kehysten
