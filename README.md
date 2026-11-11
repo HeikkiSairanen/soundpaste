@@ -4,7 +4,7 @@ Siirrä lyhyt teksti (linkki, salasana, koodinpätkä) viereiselle koneelle
 äänellä. Toinen kone soittaa kaiuttimesta, toinen kuuntelee mikrofonilla ja
 kuittaa äänellä takaisin. Palvelinta ei ole: kaikki tapahtuu selaimessa.
 
-- Sivu: https://sairanen.org/soundpaste (julkaisu: ks. [Julkaisu](#julkaisu))
+- Sivu: https://sairanen.org/soundpaste tai https://heikkisairanen.github.io/soundpaste/ (julkaisu: ks. [Julkaisu](#julkaisu))
 - Suunnitelma ja perustelut: [DESIGN.md](DESIGN.md)
 - Kokeilupäiväkirja mittaustuloksineen: [EXPERIMENTS.md](EXPERIMENTS.md)
 - Alkuperäinen tehtävänanto: [TEHTAVA.md](TEHTAVA.md)
@@ -174,6 +174,7 @@ Uusi aaltomuoto on uusi rivi taulukossa `MFSK_PRESETS`
 ```sh
 ./julkaise.sh -n    # kääntää, testaa ja näyttää, mitä lähetettäisiin
 ./julkaise.sh       # lähettää dist/-hakemiston osoitteeseen sairanen.org/soundpaste
+./julkaise-github.sh   # sama sisältö GitHub Pagesiin (haara gh-pages)
 ```
 
 Tarvitsee tiedoston `.julkaisu` (rivi `ZONER_USER=tunnus`, ei versionhallinnassa)
