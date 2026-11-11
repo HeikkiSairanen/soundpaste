@@ -172,15 +172,11 @@ Uusi aaltomuoto on uusi rivi taulukossa `MFSK_PRESETS`
 ## Julkaisu
 
 ```sh
-./julkaise.sh -n    # kääntää, testaa ja näyttää, mitä lähetettäisiin
-./julkaise.sh       # lähettää dist/-hakemiston osoitteeseen sairanen.org/soundpaste
-./julkaise-github.sh   # sama sisältö GitHub Pagesiin (haara gh-pages)
+./julkaise-github.sh   # kääntää sivun ja lähettää dist/-hakemiston GitHub Pagesiin (haara gh-pages)
 ```
 
-Tarvitsee tiedoston `.julkaisu` (rivi `ZONER_USER=tunnus`, ei versionhallinnassa)
-ja SSH-avaimen Zonerin ohjauspaneelissa. Skripti tarkistaa lopuksi, että
-palvelimen tiedostot vastaavat paikallisia ja että wasm tarjoillaan oikealla
-MIME-tyypillä.
+`dist/` on tavallinen staattinen hakemisto, joten sen voi kopioida mille tahansa
+HTTPS-palvelimelle. Palvelimen pitää tarjoilla `.wasm` MIME-tyypillä `application/wasm`.
 
 ## Tunnetut rajoitukset
 
