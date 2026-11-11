@@ -9,6 +9,7 @@
 //!
 //! Siemenluvut ovat kiinteät, joten sama koodi tuottaa aina saman tuloksen.
 
+use crate::corpus::{self, CorpusScore};
 use crate::json::Json;
 use modem_core::phy::{bit_errors, PhyEvent, PhyKind};
 use modem_core::rng::Rng;
@@ -93,6 +94,58 @@ pub fn synthetic_profiles() -> Vec<Profile> {
             c
         }),
     ]
+}
+
+/// Mitatut kanavat korpuksesta. Jokaisesta mittauksesta tulee kaksi profiilia:
+/// - `mitattu:<id>`: impulssivaste ja taustamelu sellaisenaan
+/// - `mitattu:<id>:kaukana`: sama, mutta suoraa ääntä vaimennettu 14 dB. Kun
+///   kaiutin ja mikrofoni ovat samassa koneessa, suora ääni on paljon kaikua
+///   voimakkaampi kuin toiselle koneelle metrin päähän. Kaikukenttä on huoneessa
+///   suunnilleen sama kaikkialla, joten suoran äänen vaimentaminen arvioi
+///   kauempana olevaa vastaanottajaa. Tämä on johdettu arvio, ei mittaus.
+pub fn measured_profiles(include_holdout: bool) -> Vec<Profile> {
+    let mut out = Vec::new();
+    for (path, meta) in corpus::entries(corpus::CHANNEL_DIR) {
+        let holdout = corpus::is_holdout(&meta);
+        if holdout && !include_holdout {
+            continue;
+        }
+        let id = meta.str_at("id").unwrap_or("?").to_string();
+        let base = path.with_extension("");
+        let (Ok(ir), Ok(noise)) = (corpus::read_wav(&base.with_extension("ir.wav")), corpus::read_wav(&base.with_extension("kohina.wav"))) else {
+            eprintln!("varoitus: kanavalta {id} puuttuu ir.wav tai kohina.wav");
+            continue;
+        };
+        let fs = ir.sample_rate as f64;
+        let pre = meta.get("results").and_then(|r| r.num_at("ir_pre")).unwrap_or(0.0) as usize;
+        let noise = std::sync::Arc::new(noise.samples);
+        let note = meta.str_at("note").unwrap_or("");
+        for far in [false, true] {
+            let mut h = ir.samples.clone();
+            if far {
+                let direct = (pre + (0.0025 * fs) as usize).min(h.len());
+                let g = 10f32.powf(-14.0 / 20.0);
+                h[..direct].iter_mut().for_each(|v| *v *= g);
+            }
+            let noise = noise.clone();
+            out.push(Profile {
+                name: format!("mitattu:{id}{}", if far { ":kaukana" } else { "" }),
+                desc: format!("mitattu kanava ja taustamelu{} {note}", if far { ", suora ääni -14 dB (johdettu)" } else { "" }),
+                holdout,
+                make: Box::new(move |snr, seed| {
+                    let mut rng = Rng::new(seed ^ 0xC0FFEE);
+                    let mut c = OneWay::clean(48000.0);
+                    c.fs_rx = fs;
+                    c.snr_db = snr;
+                    c.lead_s = rng.range(0.15, 0.7);
+                    c.ir = h.clone();
+                    c.noise = NoiseKind::Recorded(noise.clone());
+                    c
+                }),
+            });
+        }
+    }
+    out
 }
 
 #[derive(Default, Clone, Debug)]
@@ -245,17 +298,19 @@ pub struct Scoreboard {
     pub ber: Option<f64>,
     pub corrected_per_frame: f64,
     pub net_rate: f64,
+    pub corpus: CorpusScore,
     pub profiles: Vec<ProfileResult>,
 }
 
 impl Scoreboard {
-    pub fn oneway(kind: PhyKind, seeds: u32, profiles: Vec<ProfileResult>) -> Scoreboard {
+    pub fn oneway(kind: PhyKind, seeds: u32, profiles: Vec<ProfileResult>, corpus: CorpusScore) -> Scoreboard {
         let mut nominal = Point::default();
         let mut all_false = 0;
         for pr in &profiles {
             for pt in &pr.points {
                 all_false += pt.false_frames;
-                if pt.snr_db >= NOMINAL_MIN_SNR {
+                // Vertailuaineisto ei vaikuta otsikkolukuihin.
+                if pt.snr_db >= NOMINAL_MIN_SNR && !pr.holdout {
                     nominal.add(pt);
                 }
             }
@@ -275,6 +330,7 @@ impl Scoreboard {
             ber: nominal.ber(),
             corrected_per_frame: nominal.corrected as f64 / nominal.ok.max(1) as f64,
             net_rate: LINK60.len() as f64 / t,
+            corpus,
             profiles,
         }
     }
@@ -287,6 +343,7 @@ impl Scoreboard {
     pub fn worst(&self) -> Option<(&str, Option<f64>)> {
         self.profiles
             .iter()
+            .filter(|p| !p.holdout)
             .map(|p| (p.name.as_str(), p.min_snr()))
             .max_by(|a, b| a.1.unwrap_or(f64::INFINITY).total_cmp(&b.1.unwrap_or(f64::INFINITY)))
     }
@@ -311,6 +368,11 @@ impl Scoreboard {
                     ("ber_pre_fec", Json::opt(self.ber)),
                     ("corrected_per_frame", Json::num(self.corrected_per_frame)),
                     ("net_bytes_per_s", Json::num(self.net_rate)),
+                    ("corpus_n", Json::num(self.corpus.n)),
+                    ("corpus_ok", Json::num(self.corpus.ok)),
+                    ("corpus_rate", Json::opt((self.corpus.n > 0).then(|| self.corpus.ok as f64 / self.corpus.n as f64))),
+                    ("holdout_n", Json::num(self.corpus.holdout_n)),
+                    ("holdout_ok", Json::num(self.corpus.holdout_ok)),
                 ]),
             ),
             (
@@ -363,6 +425,14 @@ impl Scoreboard {
         println!("  Korjatut symbolit / kehys         {:>8.2}", self.corrected_per_frame);
         println!("  Nettonopeus                       {:>8.1} tavua/s", self.net_rate);
         println!("  Alkumerkki havaittu               {:>8.1} %", self.detect_rate * 100.0);
+        if self.corpus.n + self.corpus.stale > 0 {
+            println!("  Äänitekorpus (oikea ääni)         {:>5}/{:<3}    ehjänä purettua äänitettä", self.corpus.ok, self.corpus.n);
+        } else {
+            println!("  Äänitekorpus (oikea ääni)                -   (ei äänitteitä tälle aaltomuodolle)");
+        }
+        if self.corpus.holdout_n > 0 {
+            println!("  Vertailuaineisto                  {:>5}/{:<3}", self.corpus.holdout_ok, self.corpus.holdout_n);
+        }
         if self.false_frames > 0 {
             println!("  VÄÄRIÄ KEHYKSIÄ LÄPI              {:>8}   (tarkistussumma petti!)", self.false_frames);
         }
@@ -373,7 +443,12 @@ impl Scoreboard {
         }
         println!("   alin SNR");
         for p in &self.profiles {
-            print!("  {:<22}", format!("{}{}", p.name, if p.holdout { " (vert.)" } else { "" }));
+            let mut label = format!("{}{}", p.name.replace("mitattu:", "m:"), if p.holdout { " (vert.)" } else { "" });
+            if label.chars().count() > 22 {
+                // Pitkät mitattujen kanavien nimet: jätetään aikaleiman päivämäärä pois.
+                label = label.chars().rev().take(22).collect::<Vec<_>>().into_iter().rev().collect();
+            }
+            print!("  {label:<22}");
             for pt in &p.points {
                 print!("{:>4.0}", pt.success() * 100.0);
             }

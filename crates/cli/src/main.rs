@@ -1,8 +1,11 @@
 //! soundpaste-komentorivityökalu: sama modeemiydin kuin selaimessa.
 
+mod acoustic;
 mod args;
+mod audio;
 mod bench;
 mod compare;
+mod corpus;
 mod json;
 
 use args::Args;
@@ -28,6 +31,14 @@ Mittaus:
   compare [uusi.json] [--baseline bench/baseline.json]    Vertaa ajoa perustasoon
   baseline [ajo.json]                                     Aseta ajo (oletus: uusin) perustasoksi
   profiles                                                Listaa kanavaprofiilit
+
+Oikea ääni (Mac, SoX). Valinta --sim <profiili> ajaa saman hiljaa simulaattorilla.
+  audio-test [--seconds 2]                                Äänitä hetki ja näytä taso (ei soita mitään)
+  measure [--gain 0.3] [--label mac] [--distance m] [--note ..] [--volume 0-100]
+                                                          Kanavamittaus pyyhkäisyllä -> corpus/kanava
+  analyze äänite.wav [--gain 0.3] [--save --label x]      Analysoi valmis pyyhkäisyäänite
+  acoustic [--phy P] [--gains 1.0,0.3,0.1] [\"teksti\"]     Soita, äänitä, pura -> corpus/lahetys
+  corpus [--phy P] [--holdout]                            Listaa korpus ja aja äänitteet vastaanottimella
 ";
 
 fn main() -> ExitCode {
@@ -44,9 +55,14 @@ fn main() -> ExitCode {
         "bench" => cmd_bench(rest),
         "compare" => cmd_compare(rest),
         "baseline" => cmd_baseline(rest),
+        "audio-test" => acoustic::cmd_audio_test(rest),
+        "measure" => acoustic::cmd_measure(rest),
+        "analyze" => acoustic::cmd_analyze(rest),
+        "acoustic" => acoustic::cmd_acoustic(rest),
+        "corpus" => acoustic::cmd_corpus(rest),
         "profiles" => {
-            for p in bench::synthetic_profiles() {
-                println!("{:<14} {}", p.name, p.desc);
+            for p in bench::synthetic_profiles().into_iter().chain(bench::measured_profiles(true)) {
+                println!("{:<34} {}{}", p.name, p.desc, if p.holdout { " (vertailuaineisto)" } else { "" });
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -65,7 +81,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn phy_arg(a: &Args) -> Result<PhyKind, String> {
+pub fn phy_arg(a: &Args) -> Result<PhyKind, String> {
     match a.str("phy") {
         None => Ok(PhyKind::DEFAULT),
         Some(s) => PhyKind::from_name(s).ok_or_else(|| {
@@ -145,7 +161,8 @@ fn cmd_sim(raw: &[String]) -> Result<ExitCode, String> {
     let seed: u64 = a.num("seed", 1)?;
     let name = a.str_or("profile", "huone");
     let text = a.positional.first().map(|s| s.as_str()).unwrap_or(bench::LINK60);
-    let profiles = bench::synthetic_profiles();
+    let mut profiles = bench::synthetic_profiles();
+    profiles.extend(bench::measured_profiles(true));
     let profile = profiles.iter().find(|p| p.name == name).ok_or_else(|| format!("tuntematon profiili '{name}' (ks. soundpaste profiles)"))?;
     let cfg = (profile.make)(snr, seed);
     let tx = kind.modulator(cfg.fs_tx).modulate(text.as_bytes());
@@ -183,14 +200,16 @@ fn load_json(path: &Path) -> Result<Json, String> {
 }
 
 fn cmd_bench(raw: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(raw, &["quick", "no-save"])?;
+    let a = Args::parse(raw, &["quick", "no-save", "holdout"])?;
     let kind = phy_arg(&a)?;
     let seeds: u32 = a.num("seeds", if a.has("quick") { 4 } else { 12 })?;
     let threads: usize = a.num("threads", std::thread::available_parallelism().map_or(4, |n| n.get()))?;
     let started = std::time::Instant::now();
-    let profiles = bench::synthetic_profiles();
+    let mut profiles = bench::synthetic_profiles();
+    profiles.extend(bench::measured_profiles(a.has("holdout")));
     let results = bench::run_profiles(&bench::BenchOptions { kind, seeds, threads }, &profiles);
-    let board = bench::Scoreboard::oneway(kind, seeds, results);
+    let corpus_score = corpus::run_regression(Some(kind), a.has("holdout"), false);
+    let board = bench::Scoreboard::oneway(kind, seeds, results, corpus_score);
     board.print();
     println!("\n(ajo kesti {:.1} s)", started.elapsed().as_secs_f64());
     if !a.has("no-save") {

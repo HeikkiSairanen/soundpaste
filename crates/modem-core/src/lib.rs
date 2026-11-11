@@ -13,3 +13,4 @@ pub mod rng;
 pub mod wav;
 pub mod phy;
 pub mod sim;
+pub mod measure;

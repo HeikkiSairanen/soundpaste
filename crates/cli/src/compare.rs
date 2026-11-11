@@ -34,6 +34,7 @@ const METRICS: &[Metric] = &[
     Metric { label: "Alin SNR, huone (dB)", key: "min_snr_db_room", unit: "", digits: 0, better: -1.0, tol_abs: 1.0, tol_rel: 0.0, missing_is_worst: true },
     Metric { label: "BER ennen korjausta", key: "ber_pre_fec", unit: "", digits: 5, better: -1.0, tol_abs: 1e-4, tol_rel: 1.0, missing_is_worst: false },
     Metric { label: "Nettonopeus (tavua/s)", key: "net_bytes_per_s", unit: "", digits: 1, better: 1.0, tol_abs: 0.0, tol_rel: 0.05, missing_is_worst: false },
+    Metric { label: "Korpus, onnistuneet", key: "corpus_rate", unit: "", digits: 2, better: 1.0, tol_abs: 0.001, tol_rel: 0.0, missing_is_worst: false },
     Metric { label: "Väärät kehykset", key: "false_frames", unit: "", digits: 0, better: -1.0, tol_abs: 0.5, tol_rel: 0.0, missing_is_worst: false },
 ];
 
