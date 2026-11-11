@@ -1,0 +1,12 @@
+[package]
+name = "soundpaste-wasm"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+description = "WebAssembly-kääre: vie aseman (modeemi + linkkikerros) selaimelle C-rajapintana, ilman wasm-bindgeniä."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+modem-core = { path = "../modem-core" }

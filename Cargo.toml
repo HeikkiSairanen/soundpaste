@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/modem-core", "crates/cli"]
+members = ["crates/modem-core", "crates/cli", "crates/wasm"]
 resolver = "2"
 
 [workspace.package]
@@ -16,3 +16,10 @@ opt-level = 2
 
 [profile.release]
 opt-level = 3
+
+# Selainversio: ei pinon purkua paniikissa (pienempi binääri), koko ohjelman optimointi.
+[profile.wasm]
+inherits = "release"
+panic = "abort"
+lto = true
+codegen-units = 1

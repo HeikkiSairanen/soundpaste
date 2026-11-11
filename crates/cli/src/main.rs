@@ -8,6 +8,8 @@ mod compare;
 mod corpus;
 mod explore;
 mod json;
+mod live;
+mod serve;
 mod session;
 
 use args::Args;
@@ -43,9 +45,18 @@ Oikea ääni (Mac, SoX). Valinta --sim <profiili> ajaa saman hiljaa simulaattori
   audio-test [--seconds 2]                                Äänitä hetki ja näytä taso (ei soita mitään)
   measure [--gain 0.3] [--label mac] [--distance m] [--note ..] [--volume 0-100]
                                                           Kanavamittaus pyyhkäisyllä -> corpus/kanava
+  measure --kaukaa pc | --kauas pc                        Kahden koneen kanava testiaseman kanssa (vaatii serve)
   analyze äänite.wav [--gain 0.3] [--save --label x]      Analysoi valmis pyyhkäisyäänite
   acoustic [--phy P] [--gains 1.0,0.3,0.1] [\"teksti\"]     Soita, äänitä, pura -> corpus/lahetys
   corpus [--phy P] [--holdout]                            Listaa korpus ja aja äänitteet vastaanottimella
+  live [--send \"teksti\"] [--expect \"teksti\"] [--seconds N] [--echo] [--once] [--handshake]
+                                                          Asema oikealla äänellä (sama tilakone kuin selaimessa)
+
+Kehityspalvelin (vain kehityskäyttöön):
+  serve [--port 8787]                                     Tarjoile sivu lähiverkkoon, vastaanota lokit ja äänitteet
+  remote <komento>                                        Ohjaa testiasemaa: tila vastaanotto|kaiku|majakka [väli],
+                                                          laheta <teksti>, pyyhkaisy [amplitudi], aanita <s> <tyyppi>,
+                                                          lataa, tila
 ";
 
 fn main() -> ExitCode {
@@ -61,6 +72,9 @@ fn main() -> ExitCode {
         "sim" => cmd_sim(rest),
         "bench" => cmd_bench(rest),
         "session" => session::cmd_session(rest),
+        "live" => live::cmd_live(rest),
+        "serve" => serve::cmd_serve(rest),
+        "remote" => serve::cmd_remote(rest),
         "compare" => cmd_compare(rest),
         "baseline" => cmd_baseline(rest),
         "audio-test" => acoustic::cmd_audio_test(rest),

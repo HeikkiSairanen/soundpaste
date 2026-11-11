@@ -86,6 +86,27 @@ pub fn decode_expect(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeResu
     r
 }
 
+/// Sessioäänite (koko keskustelu yhden aseman mikrofonista): äänite syötetään
+/// tuoreelle asemalle, joka toimii passiivisena vastaanottajana. Sen omat
+/// vastaukset eivät päädy mihinkään, mutta se kokoaa viestin kuulemistaan
+/// kehyksistä samalla koodilla kuin oikea vastaanottaja.
+pub fn decode_session(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeResult {
+    use modem_core::link::{Event, LinkConfig};
+    let mut station = modem_core::station::Station::new(kind, w.sample_rate as f64, LinkConfig::default(), 1);
+    let mut out = vec![0.0f32; 480];
+    let mut ok = false;
+    for chunk in w.samples.chunks(480) {
+        station.process(chunk, &mut out[..chunk.len()]);
+        while let Some(e) = station.poll_event() {
+            if let Event::Received { data, .. } = e {
+                ok |= data == expected;
+            }
+        }
+    }
+    let st = station.stats();
+    DecodeResult { ok, detected: st.preambles > 0, snr_db: (st.frames_ok > 0).then_some(st.last_snr_db), corrected: st.corrected }
+}
+
 /// Aja lähetysäänitteet nykyisillä vastaanottimilla. `only`: rajaa yhteen aaltomuotoon.
 /// `verbose`: tulosta rivi per äänite.
 pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: bool) -> CorpusScore {
@@ -96,7 +117,7 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
         let Some(kind) = PhyKind::from_name(phy_name) else {
             score.stale += 1;
             if verbose {
-                println!("  {id:<44} vanhentunut (aaltomuotoa '{phy_name}' ei enää ole)");
+                println!("  {id:<50} vanhentunut (aaltomuotoa '{phy_name}' ei enää ole)");
             }
             continue;
         };
@@ -115,7 +136,7 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
                 continue;
             }
         };
-        let r = decode_expect(kind, &w, text.as_bytes());
+        let r = if meta.str_at("kind") == Some("sessio") { decode_session(kind, &w, text.as_bytes()) } else { decode_expect(kind, &w, text.as_bytes()) };
         if holdout {
             score.holdout_n += 1;
             score.holdout_ok += r.ok as u32;
@@ -125,7 +146,7 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
         }
         if verbose {
             println!(
-                "  {id:<44} {:<8} {}{}  voimakkuus {}, SNR {}",
+                "  {id:<50} {:<8} {}{}  voimakkuus {}, SNR {}",
                 phy_name,
                 if r.ok { "ok   " } else if r.detected { "VIRHE" } else { "EI HAVAITTU" },
                 if holdout { " (vert.)" } else { "" },

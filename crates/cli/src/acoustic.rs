@@ -159,14 +159,19 @@ fn measurement_json(m: &ChannelMeasurement) -> Json {
 }
 
 fn save_channel(a: &Args, id: &str, fs: u32, rec: &[f32], sweep: &Sweep, m: &ChannelMeasurement, volume: Option<u32>) -> Result<(), String> {
+    let mut meta = common_meta(a, id, "kanava", fs, volume, sweep.amplitude as f64);
+    meta.push(("label", Json::str(a.str_or("label", "mac"))));
+    store_channel(id, fs, rec, sweep, m, meta)
+}
+
+/// Tallenna kanavamittaus korpukseen: äänite, metatiedot, impulssivaste ja taustamelu.
+pub fn store_channel(id: &str, fs: u32, rec: &[f32], sweep: &Sweep, m: &ChannelMeasurement, mut meta: Vec<(&'static str, Json)>) -> Result<(), String> {
     std::fs::create_dir_all(corpus::CHANNEL_DIR).map_err(|e| e.to_string())?;
     let base = std::path::Path::new(corpus::CHANNEL_DIR).join(id);
     let w = |ext: &str, bytes: Vec<u8>| std::fs::write(base.with_extension(ext), bytes).map_err(|e| e.to_string());
     w("wav", wav::encode_pcm16(fs, rec))?;
     w("ir.wav", wav::encode_f32(fs, &m.ir))?;
     w("kohina.wav", wav::encode_f32(fs, &m.noise))?;
-    let mut meta = common_meta(a, id, "kanava", fs, volume, sweep.amplitude as f64);
-    meta.push(("label", Json::str(a.str_or("label", "mac"))));
     meta.push(("sweep", Json::obj(vec![("f1", Json::num(sweep.f1)), ("f2", Json::num(sweep.f2)), ("duration_s", Json::num(sweep.duration_s)), ("amplitude", Json::num(sweep.amplitude))])));
     meta.push(("results", measurement_json(m)));
     w("json", Json::obj(meta).pretty().into_bytes())?;
@@ -175,20 +180,53 @@ fn save_channel(a: &Args, id: &str, fs: u32, rec: &[f32], sweep: &Sweep, m: &Cha
 }
 
 /// Kanavamittaus: soita pyyhkäisy, äänitä, laske impulssivaste ja taustamelu.
+///
+/// Kahden koneen mittaus kehityspalvelimen kautta (testiasema auki selaimessa):
+/// - `--kaukaa <asema>`: testiasema soittaa pyyhkäisyn ja tämä kone äänittää
+/// - `--kauas <asema>`: tämä kone soittaa ja testiasema äänittää ja lähettää
+///   äänitteen palvelimelle, joka analysoi ja tallentaa sen
 pub fn cmd_measure(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &["holdout", "no-holdout", "no-save"])?;
     let fs: u32 = a.num("rate", 48000)?;
+    let port: u16 = a.num("port", 8787)?;
     let sweep = Sweep { amplitude: a.num("gain", 0.3)?, ..Sweep::default() };
     let tx = measure::test_signal(&sweep, fs as f64);
-    let label = a.str_or("label", "mac");
+
+    if let Some(station) = a.str("kauas") {
+        // Testiasema äänittää 10 s tästä hetkestä; pyyhkäisy soitetaan sen sisään.
+        let extra = format!("{}{}", if a.has("holdout") { "vertailu " } else { "" }, a.str_or("note", ""));
+        print!("{}", crate::serve::http(port, "POST", "/dev/command", format!("aanita 10 kanava {} {extra}", sweep.amplitude).as_bytes())?);
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        println!("KANAVAMITTAUS Mac -> {station}: soitetaan pyyhkäisy, asema äänittää ja palvelin analysoi (ks. palvelimen tuloste)");
+        audio::play_and_record(&tx, fs, 0.2, 0.2)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let label = match a.str("kaukaa") {
+        Some(station) => format!("{station}-mac"),
+        None => a.str_or("label", "mac").to_string(),
+    };
     let id = format!("{}-{}-g{:03.0}", bench::utc_now(), label, sweep.amplitude * 100.0);
     println!("KANAVAMITTAUS {id}: pyyhkäisy {:.0}–{:.0} Hz, {:.1} s, amplitudi {}", sweep.f1, sweep.f2, sweep.duration_s, sweep.amplitude);
-    // Pitkä hiljainen alku: siitä saadaan useampi sekunti huoneen taustamelua.
-    let (rec, volume) = capture(&a, &tx, fs, 0.05, 3.0)?;
+    let (rec, volume) = if let Some(station) = a.str("kaukaa") {
+        // Testiasema soittaa (se hakee komennot sekunnin välein), tämä kone äänittää.
+        println!("  testiasema {station} soittaa, tämä kone äänittää 9 s");
+        print!("{}", crate::serve::http(port, "POST", "/dev/command", format!("pyyhkaisy {}", sweep.amplitude).as_bytes())?);
+        (audio::record(fs, 9.0)?, None)
+    } else {
+        // Pitkä hiljainen alku: siitä saadaan useampi sekunti huoneen taustamelua.
+        capture(&a, &tx, fs, 0.05, 3.0)?
+    };
     let m = measure::analyze(&rec, fs as f64, &sweep)?;
     print_measurement(&m);
     if !a.has("no-save") {
-        save_channel(&a, &id, fs, &rec, &sweep, &m, volume)?;
+        let mut meta = common_meta(&a, &id, "kanava", fs, volume, sweep.amplitude as f64);
+        if let Some(station) = a.str("kaukaa") {
+            meta.retain(|(k, _)| *k != "device");
+            meta.push(("device", Json::str(&format!("kaiutin: {station} (selain); mikrofoni: {}", audio::device_description()))));
+        }
+        meta.push(("label", Json::str(&label)));
+        store_channel(&id, fs, &rec, &sweep, &m, meta)?;
     }
     Ok(ExitCode::SUCCESS)
 }

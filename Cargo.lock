@@ -12,3 +12,10 @@ version = "0.1.0"
 dependencies = [
  "modem-core",
 ]
+
+[[package]]
+name = "soundpaste-wasm"
+version = "0.1.0"
+dependencies = [
+ "modem-core",
+]
