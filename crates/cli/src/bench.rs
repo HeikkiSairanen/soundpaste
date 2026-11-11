@@ -180,6 +180,10 @@ pub struct Point {
     pub bit_errors: u64,
     pub bits: u64,
     pub corrected: u64,
+    /// Onnistuneiden sessioiden kestot (ms), vain sessiotilassa.
+    pub times: Vec<u32>,
+    /// Lähetetyt datakehykset ja POLL-kehykset (uudelleenlähetysten mittari), vain sessiotilassa.
+    pub frames_sent: u64,
 }
 
 impl Point {
@@ -197,6 +201,8 @@ impl Point {
         self.bit_errors += o.bit_errors;
         self.bits += o.bits;
         self.corrected += o.corrected;
+        self.times.extend_from_slice(&o.times);
+        self.frames_sent += o.frames_sent;
     }
 }
 
@@ -275,24 +281,31 @@ pub struct BenchOptions {
 
 pub fn run_profiles(opts: &BenchOptions, profiles: &[Profile]) -> Vec<ProfileResult> {
     let payload = LINK60.as_bytes();
+    let kind = opts.kind;
+    run_grid(opts, profiles, SNR_GRID, &|cfg, seed| run_once(kind, cfg, payload, seed))
+}
+
+/// Aja `job` jokaiselle (profiili, SNR, toisto) -yhdistelmälle rinnakkain.
+pub fn run_grid(opts: &BenchOptions, profiles: &[Profile], grid: &[f64], job: &(dyn Fn(&OneWay, u64) -> Point + Sync)) -> Vec<ProfileResult> {
     let jobs: Vec<(usize, usize, u32)> = (0..profiles.len())
-        .flat_map(|p| (0..SNR_GRID.len()).flat_map(move |s| (0..opts.seeds).map(move |i| (p, s, i))))
+        .flat_map(|p| (0..grid.len()).flat_map(move |s| (0..opts.seeds).map(move |i| (p, s, i))))
         .collect();
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Vec<Point>>> = Mutex::new(
-        profiles.iter().map(|_| SNR_GRID.iter().map(|&snr_db| Point { snr_db, ..Default::default() }).collect()).collect(),
+        profiles.iter().map(|_| grid.iter().map(|&snr_db| Point { snr_db, ..Default::default() }).collect()).collect(),
     );
     std::thread::scope(|scope| {
         for _ in 0..opts.threads.max(1) {
             scope.spawn(|| loop {
                 let j = next.fetch_add(1, Ordering::Relaxed);
                 let Some(&(p, s, i)) = jobs.get(j) else { break };
-                // Siemen riippuu vain profiilin nimestä, SNR-pisteestä ja toistosta,
+                // Siemen riippuu vain profiilin nimestä, SNR-arvosta ja toistosta,
                 // joten sama kanava toistuu eri modeemiversioilla.
                 let name_hash = profiles[p].name.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3));
-                let seed = name_hash ^ ((s as u64) << 32) ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9);
-                let cfg = (profiles[p].make)(SNR_GRID[s], seed);
-                let pt = run_once(opts.kind, &cfg, payload, seed);
+                let snr_index = SNR_GRID.iter().position(|&x| x == grid[s]).unwrap_or(s + 100);
+                let seed = name_hash ^ ((snr_index as u64) << 32) ^ (i as u64 + 1).wrapping_mul(0x9E37_79B9);
+                let cfg = (profiles[p].make)(grid[s], seed);
+                let pt = job(&cfg, seed);
                 results.lock().unwrap()[p][s].add(&pt);
             });
         }
@@ -320,6 +333,8 @@ pub struct Scoreboard {
     pub corrected_per_frame: f64,
     pub net_rate: f64,
     pub corpus: CorpusScore,
+    /// Datakehyksiä ja kuittauspyyntöjä per sessio nimellisoloissa (1,0 = ei uudelleenlähetyksiä).
+    pub frames_per_session: Option<f64>,
     pub profiles: Vec<ProfileResult>,
 }
 
@@ -352,6 +367,38 @@ impl Scoreboard {
             corrected_per_frame: nominal.corrected as f64 / nominal.ok.max(1) as f64,
             net_rate: LINK60.len() as f64 / t,
             corpus,
+            frames_per_session: None,
+            profiles,
+        }
+    }
+
+    /// Sessiotilan pistetaulu: siirtoaika ja onnistuminen koko protokollalla
+    /// (kaksi asemaa, kuittaukset), marginaaliluvut yksisuuntaisesta ajosta.
+    pub fn session(kind: PhyKind, seeds: u32, link_desc: &str, profiles: Vec<ProfileResult>, phy_only: &Scoreboard, corpus: CorpusScore) -> Scoreboard {
+        let mut nominal = Point::default();
+        for pr in profiles.iter().filter(|p| !p.holdout) {
+            for pt in pr.points.iter().filter(|pt| pt.snr_db >= NOMINAL_MIN_SNR) {
+                nominal.add(pt);
+            }
+        }
+        nominal.times.sort_unstable();
+        let median = nominal.times.get(nominal.times.len() / 2).map_or(f64::NAN, |&ms| ms as f64 / 1000.0);
+        Scoreboard {
+            phy: kind.name().into(),
+            mode: format!("sessio: {link_desc}"),
+            commit: git_commit(),
+            time_utc: utc_now(),
+            seeds,
+            transfer_time_s: median,
+            transfer_note: "Lähetä-napista Perillä-ilmoitukseen, mediaani nimellisoloissa".into(),
+            success_rate: nominal.success(),
+            detect_rate: phy_only.detect_rate,
+            false_frames: phy_only.false_frames,
+            ber: phy_only.ber,
+            corrected_per_frame: phy_only.corrected_per_frame,
+            net_rate: LINK60.len() as f64 / median,
+            corpus,
+            frames_per_session: Some(nominal.frames_sent as f64 / nominal.n.max(1) as f64),
             profiles,
         }
     }
@@ -389,6 +436,7 @@ impl Scoreboard {
                     ("ber_pre_fec", Json::opt(self.ber)),
                     ("corrected_per_frame", Json::num(self.corrected_per_frame)),
                     ("net_bytes_per_s", Json::num(self.net_rate)),
+                    ("frames_per_session", Json::opt(self.frames_per_session)),
                     ("corpus_n", Json::num(self.corpus.n)),
                     ("corpus_ok", Json::num(self.corpus.ok)),
                     ("corpus_rate", Json::opt((self.corpus.n > 0).then(|| self.corpus.ok as f64 / self.corpus.n as f64))),
@@ -420,6 +468,11 @@ impl Scoreboard {
                                                     ("detected", Json::num(pt.detected)),
                                                     ("ber", Json::opt(pt.ber())),
                                                     ("corrected", Json::num(pt.corrected as f64)),
+                                                    ("median_ms", Json::opt({
+                                                        let mut t = pt.times.clone();
+                                                        t.sort_unstable();
+                                                        t.get(t.len() / 2).map(|&v| v as f64)
+                                                    })),
                                                 ])
                                             })
                                             .collect(),
@@ -446,6 +499,9 @@ impl Scoreboard {
         println!("  Korjatut symbolit / kehys         {:>8.2}", self.corrected_per_frame);
         println!("  Nettonopeus                       {:>8.1} tavua/s", self.net_rate);
         println!("  Alkumerkki havaittu               {:>8.1} %", self.detect_rate * 100.0);
+        if let Some(f) = self.frames_per_session {
+            println!("  Datakehyksiä + pyyntöjä / sessio  {:>8.2}     (1,00 = ei uudelleenlähetyksiä)", f);
+        }
         if self.corpus.n + self.corpus.stale > 0 {
             println!("  Äänitekorpus (oikea ääni)         {:>5}/{:<3}    ehjänä purettua äänitettä", self.corpus.ok, self.corpus.n);
         } else {
@@ -459,8 +515,8 @@ impl Scoreboard {
         }
         println!();
         print!("  onnistuminen %      SNR dB:");
-        for s in SNR_GRID {
-            print!("{s:>4.0}");
+        for pt in self.profiles.first().map(|p| p.points.as_slice()).unwrap_or(&[]) {
+            print!("{:>4.0}", pt.snr_db);
         }
         println!("   alin SNR");
         for p in &self.profiles {

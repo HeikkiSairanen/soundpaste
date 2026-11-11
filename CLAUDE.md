@@ -60,18 +60,26 @@ kaataa ohjelman ennen tallennusta.
 
 ## Nykytila
 
-- Vaiheet 1–2 valmiit: karkea v0, mittaristo, kanavamittaukset ja korpuksen alku.
-  Perustaso: `bench/baseline.json` (v0-bfsk, ks. `EXPERIMENTS.md` kohdat 0–1).
-- Vaihe 3: `DESIGN.md` on kirjoitettu ja **odottaa käyttäjän kommentteja**.
-  Varsinaista modeemia (vaihe 4) ei aloiteta ennen niitä.
-- Valmiina vaihetta 4 varten: `rs.rs` (Reed–Solomon pyyhkiytymineen) ja
-  `explore.rs`, jonka sävelristikko ja MFSK-ilmaisu ovat uuden aaltomuodon pohja.
+- Vaiheet 1–5 valmiit. Oletusaaltomuoto `v1` (16 × 4-FSK, sävelhyppy, pyyhkäisyalkumerkki,
+  Reed–Solomon), linkkikerros (`link/`), asema (`station.rs`) ja kaksisuuntainen
+  simulaatio (`sim/duplex.rs`).
+- Perustaso `bench/baseline.json`: sessiotila, 60 merkin linkki 2,82 s, onnistuminen
+  93,9 % nimellisoloissa (puuttuva osa on `halli`-profiili, joka ei toimi), alin SNR
+  huoneessa -6 dB.
+- `soundpaste bench` ajaa oletuksena koko session (noin 35 s). `--oneway` mittaa
+  pelkän fyysisen kerroksen (noin 18 s), `--quick` on nopea tarkistus.
+- Tehdyt valinnat ja perusteet: `DESIGN.md` (luvut 5.8 ja 10) ja `EXPERIMENTS.md`.
 
-## Seuraavaksi (vaihe 4, kun suunnitelma on hyväksytty)
+## Tunnetut rajat (rehellisesti)
 
-1. Uusi aaltomuoto `PhyKind::V1…`: 16 × 4-FSK, hyppy 4 ryhmää, 40+10 ms,
-   pyyhkäisyalkumerkki + CFAR-ilmaisu, otsake ja Reed–Solomon (DESIGN.md luku 4).
-2. Kokeilut yksi kerrallaan päiväkirjaan: 16×40+10 ms vs. 8×20+5 ms, tavujen
-   sijoittelu (aika vs. taajuus), pyyhkiytymäkynnys, pariteetin määrä,
-   huippujen leikkaus, alkumerkin pituus ja kynnys.
-3. Akustinen kehä uudella aaltomuodolla (kysy lupa äänelle).
+- `halli` (RT60 1,2 s, kaiku suoraa ääntä voimakkaampi) ei toimi. Korjaus olisi
+  DESIGN.md:n luvun 7 kestävä tila; käyttäjä päätti jättää sen pois, kunnes käytäntö vaatii.
+- Kahden koneen välillä ei ole vielä mitattu mitään. Toisen koneen kanava on arvio.
+- Täsmälleen yhtäaikainen lähetys (alle 0,2 s) ratkeaa noin 93 %:ssa tapauksista.
+
+## Seuraavaksi kokeilemisen arvoista
+
+- Oikean kahden koneen kanavan mittaus (PC-testiasema) ja sen lisääminen profiileiksi.
+- Pariteetti 1/3 (`v1-p3`): 10 % nopeampi, 3 dB herkempi. Päätös oikean datan perusteella.
+- Alkumerkin havaitsemisviiveen (noin 150 ms) lyhentäminen: pienentäisi törmäysikkunaa.
+- Häiriöprofiilit (`kolahdus`, `puhe`) ovat simulaatiossa liian helppoja: oikeat äänitteet tilalle.

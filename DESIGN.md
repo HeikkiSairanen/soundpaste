@@ -28,7 +28,7 @@ Sisältö:
 | virheenkorjaus | Reed–Solomon GF(256), pariteettia puolet datan määrästä, pyyhkiytymät käytössä | korjaa 16 % tavuista virheinä tai 33 % pyyhkiytyminä |
 | kuittaus | datakehykset ryöppynä, yksi koontikuittaus (bittikartta) | enimmäisviestillä noin 15 s vs. 23 s kehyskohtaisella kuittauksella |
 | oma kaiku | vastaanotin käy koko ajan; oma kehys tunnistetaan sisällöstä ja siitä ankkuroidaan aikakatkaisut | ei riipu selaimen tuntemattomasta viiveestä |
-| 60 merkin linkki | noin 4,1 s kättelyineen (2,6 s, jos lyhyt viesti kulkee aloituskehyksessä) | ks. luku 6 |
+| 60 merkin linkki | simulaatiossa mitattu 2,8 s (pikalähetys, oletus) tai 4,2 s (erillinen kättely) | ks. luku 6 |
 
 ## 2. Mitattu kanava
 
@@ -243,10 +243,10 @@ tavut 1–2 = viestin tunniste (satunnainen 16-bittinen, lähettäjä valitsee).
 
 | tyyppi | nimi | suunta | sisältö tavusta 3 alkaen | L |
 |---|---|---|---|---|
-| 1 | START | A -> B | viestin pituus (2), kehysten määrä (1), kehyksen datakoko (1), viestin CRC-32 (4) | 11 |
-| 2 | START_ACK | B -> A | signaalin laatu: SNR dB (1), liput (1: leikkautuu, hiljainen) | 5 |
+| 1 | START | A -> B | viestin pituus (2), kehysten määrä (1), kehyksen datakoko (1), viestin CRC-32 (4). Lippu 1: koko viesti seuraa kehyksen lopussa (pikalähetys) | 11–75 |
+| 2 | START_ACK | B -> A | signaalin laatu: SNR dB (1), taso dBFS (1), liput (1: bitti 0 = leikkautuu) | 6 |
 | 3 | DATA | A -> B | järjestysnumero (1), dataa enintään 64 tavua. Lippu 0: ryöpyn viimeinen | 4–68 |
-| 4 | ACK | B -> A | laatu (2), bittikartta saaduista kehyksistä (1–2). Lippu 0: aloita alusta | 6–7 |
+| 4 | ACK | B -> A | laatu (3), bittikartta saaduista kehyksistä (1). Lippu 0: aloita alusta | 7 |
 | 5 | DONE | B -> A | viestin CRC-32 (4) | 7 |
 | 6 | POLL | A -> B | ei sisältöä: "lähetä kuittauksesi uudelleen" | 3 |
 | 7 | CANCEL | A -> B | ei sisältöä | 3 |
@@ -306,12 +306,12 @@ vastapuolen), ei omaan kelloon lähetyshetkellä.
 | vastausviive | 150 ms | vastaanotetun kehyksen loppu | oman ja huoneen kaiun suoja-aika |
 | vastauksen odotus | 1,5 s | oman kehyksen loppu mikrofonissa | kattaa vastausviiveen ja molempien laitteiden ääniviiveet |
 | odotuksen jatko | kehyksen loppuun | alkumerkki havaittu odotuksen aikana | vastaus on tulossa, vaikka se alkoi myöhään |
-| aloitusyritykset | 3 | | sitten "vastaanottajaa ei löytynyt" (noin 6 s) |
+| aloitusyritykset | 3 | | sitten "vastaanottajaa ei löytynyt" (simulaatiossa noin 8–11 s) |
 | POLL-yritykset | 3 | | kuittaus tai loppukuittaus katosi |
 | uudelleenlähetyskierrokset | 6 | | sitten "siirto epäonnistui" syineen |
 | vastaanoton aikakatkaisu | 6 s | viimeisin havaittu signaalin loppu | lähettäjä katosi: osittainen viesti hylätään |
 | kanavan kuuntelu | 200 ms hiljaista | | ennen START-kehystä |
-| satunnainen odotus | 0,3–1,2 s | | kanava varattu tai aloitus törmäsi |
+| satunnainen odotus | 0,2–2,2 s | | kanava varattu tai aloitus törmäsi |
 | valmiiden viestien muisti | 8 tunnistetta, 60 s | | kaksoiskappaleiden tunnistus |
 
 B lähettää kuittauksen, kun (a) se saa DATA-kehyksen, jossa on "ryöpyn
@@ -382,7 +382,33 @@ huonon kanavan. Ryöpyn koko on linkkikerroksen parametri (1 = kehyskohtainen
 kuittaus), joten vaiheen 5 mittausajo vertaa molempia simuloiduilla
 kanavilla ennen lopullista valintaa.
 
+### 5.8 Pikalähetys (päätetty mittausten perusteella)
+
+Jos viesti mahtuu yhteen kehykseen (enintään 64 tavua), se kulkee
+ensimmäisen START-kehyksen mukana ja B vastaa suoraan DONE-kehyksellä.
+Jos aloitukseen ei vastata, uudet yritykset ovat lyhyitä START-kehyksiä ilman
+viestiä (tavallinen kättely), jotta puuttuva vastaanottaja selviää yhtä
+nopeasti kuin ennenkin. Jos pikalähetys meni perille mutta DONE katosi, B
+tunnistaa uuden aloituksen tunnisteen ja kuittaa uudelleen.
+
+Mitattu simulaatiossa (15 profiilia, 60 merkin linkki, mediaani nimellisoloissa):
+
+| tapa | siirtoaika | onnistuminen | alin SNR, huone |
+|---|---|---|---|
+| erillinen kättely | 4,24 s | 93,6 % | -6 dB |
+| pikalähetys | 2,82 s | 93,9 % | -6 dB |
+
+Onnistumisen puuttuvat prosentit tulevat `halli`-profiilista, joka ei toimi
+kummallakaan tavalla. Pikalähetys on oletus (`LinkConfig::inline_start`).
+
 ## 6. Aika-arviot
+
+**Mitattu simulaatiossa** (`soundpaste bench`, `soundpaste session`): 60 merkin
+linkki 2,8 s pikalähetyksellä ja 4,2 s kättelyllä; 512 tavua 15,4–16,1 s
+ryöppynä, 21,5–24,8 s kehyskohtaisella kuittauksella ja 17,1–18,6 s kolmen
+kehyksen ryöpyillä. Vastaanottajan puuttuminen selviää 8–11 sekunnissa.
+Alla olevat laskelmat tehtiin ennen toteutusta, ja ne osuivat mittauksiin
+muutaman prosentin tarkkuudella.
 
 Kehysten kestot ehdotetuilla parametreilla (50 ms/symboli, 4 tavua/symboli):
 
@@ -463,6 +489,17 @@ Näitä ei toteuteta nyt, mutta rakenne ei sulje niitä pois:
 - **Ei salausta eikä todennusta.** Kuka tahansa kuuloetäisyydellä voi
   vastaanottaa viestin tai lähettää oman. Käyttöliittymä kertoo tämän, ja
   vastaanotettu teksti näytetään aina pelkkänä tekstinä.
+- **Täsmälleen yhtäaikainen lähetys ei aina ratkea.** Jos molemmat painavat
+  Lähetä alle noin 0,2 sekunnin sisällä toisistaan, aloitukset törmäävät ja
+  kumpikin yrittää uudelleen satunnaisen ajan (0,2–2,2 s) kuluttua. Jos
+  arvotut ajat osuvat taas alle 0,2 s:n päähän toisistaan (alkumerkin
+  havaitsemisviive), törmäys toistuu. Kehystason testissä yli 93 % tapauksista
+  ratkeaa kolmella yrityksellä; loput päättyvät molemmilla ilmoitukseen
+  "vastaanottajaa ei löytynyt". Jos painallusten väli on yli 0,3 s, tilanne
+  ratkeaa aina.
+- **Hyvin kaikuisa tila.** Kun jälkikaiunta-aika on yli noin sekunnin ja kaiku
+  on suoraa ääntä voimakkaampi (`halli`-profiili), hyötykuorman virheet
+  ylittävät virheenkorjauksen kapasiteetin eikä uudelleenlähetys auta.
 - **Tunnisteiden törmäys.** 16-bittinen tunniste voi osua samaksi kuin
   hiljattain vastaanotettu (1/65536 per viesti muistin 8 paikkaa kohden).
   Silloin B luulisi uutta viestiä kaksoiskappaleeksi. Muistissa verrataan
@@ -495,7 +532,16 @@ rinnakkaisten sävelten tehohinta on käytännössä noin 5 dB eikä 12 dB.
 Tämä on simulaatiotulos ihanteellisella leikkurilla; oikean kaiuttimen
 käytös mitataan kehässä C.
 
-## 10. Kysymykset sinulle
+## 10. Kysymykset ja päätökset
+
+Tila 2026-11-11: kysymyksiin 1–4 ei tullut erillistä vastausta, joten
+toteutus noudattaa ehdotuksia: (1) pikalähetys on parametri ja mittausten
+perusteella oletuksena päällä (luku 5.8), (2) kaista 1–7,4 kHz, (3)
+enimmäispituus 512 tavua, (4) yhtäaikaisessa lähetyksessä väistänyt viesti
+lähtee automaattisesti. Kestävä tila kovaan meluun jätettiin pois (luku 7).
+Kaikki neljä ovat yhden rivin muutoksia (`LinkConfig`, `MfskParams`).
+
+Alkuperäiset kysymykset:
 
 1. **Lyhyt viesti aloituskehyksessä?** Tehtävänanto ehdottaa erillistä
    kättelyä (START -> START_ACK -> DATA -> DONE), ja suunnitelma noudattaa

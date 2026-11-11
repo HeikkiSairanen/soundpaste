@@ -305,9 +305,10 @@ struct ChirpCorrelator {
 impl ChirpCorrelator {
     fn new(p: &MfskParams, fs: f64) -> Self {
         let lc = (p.chirp_s * fs).round() as usize;
-        // Lohkon pitää olla selvästi mallia pidempi: huipun etsintä katsoo yhden
-        // mallin mitan eteenpäin (ks. `search`).
-        let nfft = next_pow2(4 * lc);
+        // Lohkossa pitää olla tilaa mallille, huipun etsinnälle yhden mallin mitan
+        // eteenpäin (ks. `search`) ja kohtuulliselle askeleelle. Lyhyt lohko pitää
+        // havaitsemisviiveen pienenä (48 kHz: 8192 näytettä = 170 ms).
+        let nfft = next_pow2(lc + lc + (0.015 * fs) as usize + lc / 2);
         let fft = Fft::new(nfft);
         let mut t_re = vec![0.0f32; nfft];
         let mut t_im = vec![0.0f32; nfft];

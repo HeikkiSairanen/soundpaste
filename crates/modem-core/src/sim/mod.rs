@@ -13,9 +13,11 @@
 //! siemenestä, joten ajot ovat toistettavia.
 
 pub mod channel;
+pub mod duplex;
 pub mod ir;
 pub mod noise;
 
 pub use channel::{run_oneway, OneWay, Path, PathConfig};
+pub use duplex::{Duplex, DuplexConfig, Side};
 pub use ir::synth_ir;
 pub use noise::{Interference, InterferenceKind, NoiseKind, NoiseSource};

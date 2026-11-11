@@ -154,3 +154,55 @@ Opetus: "liian hyvä" signaali on oma testitapauksensa.
 
 **Testattu:** simulaatio (15 profiilia) ja oikea ääni Macin kaiuttimesta omaan
 mikrofoniin (5 äänitettä korpuksessa). Ei vielä kahden koneen välillä.
+
+## 3. Linkkikerros: ryöppy vai kehyskohtainen kuittaus, kättely vai pikalähetys (2026-11-11)
+
+**Mittaustapa.** Mittausajo siirtyi sessiotilaan: kaksi asemaa, kummallekin
+suunnalle oma huonevaste, oman kaiuttimen vuoto omaan mikrofoniin (neljä
+kertaa toista asemaa voimakkaampana), arvotut ääniviiveet (lähtö 20–250 ms,
+tulo 10–150 ms), eri näytteenottotaajuudet ja kellovirhe profiilin mukaan.
+Onnistuminen vaatii, että lähettäjä sai vahvistuksen ja vastaanottaja näytti
+täsmälleen oikean viestin täsmälleen kerran.
+
+**Hypoteesi 1.** Ryöppy ja koontikuittaus on pitkällä viestillä noin
+kolmanneksen nopeampi kuin kehyskohtainen kuittaus (DESIGN.md: 15,5 s vs. 23 s).
+
+| 512 tavua, 6 siementä | ryöppy | 3 kehystä/kuittaus | kehyskohtainen |
+|---|---|---|---|
+| siirtoaika | 15,4–16,1 s | 17,1–18,6 s | 21,5–24,8 s |
+
+Sama tulos profiileilla `huone` ja `kaikuisa`, SNR 20 dB ja 0 dB (ei
+uudelleenlähetyksiä yhdessäkään ajossa, joten aika riippuu vain
+ääniviiveistä). Hypoteesi piti, ja laskelma osui kohdalleen. **Päätös: ryöppy.**
+Tätä ei ole mitattu kanavalla, jossa kehyksiä katoaa usein; siellä lyhyempi
+ryöppy voisi voittaa, koska kadonnut kuittauspyyntö maksaa vähemmän.
+
+**Hypoteesi 2.** Lyhyen viestin lähettäminen aloituskehyksen mukana
+(pikalähetys) lyhentää 60 merkin linkin noin 2,6 sekuntiin heikentämättä
+onnistumista.
+
+| 60 merkin linkki, 15 profiilia | kättely | pikalähetys |
+|---|---|---|
+| siirtoaika, mediaani nimellisoloissa | 4,24 s | 2,82 s |
+| onnistuminen nimellisoloissa | 93,6 % | 93,9 % |
+| alin SNR, huone / kaikuisa | -6 / 0 dB | -6 / 0 dB |
+| vastaanottajaa ei ole | noin 8–11 s | noin 8–11 s |
+
+Hypoteesi piti. Pelkona oli, että puuttuva vastaanottaja selviäisi
+hitaammin, koska aloituskehys on pidempi. Ratkaisu: vain ensimmäinen
+aloitus kantaa viestin, ja uudet yritykset ovat lyhyitä. **Päätös:
+pikalähetys oletukseksi.** Perustaso päivitetty:
+`bench/results/20261111T085404Z-0cf87ca-muutoksia-v1.json`.
+
+**Löydöksiä toteutuksen aikana.**
+- Vastaanottaja lähetti kuittauksen kahdesti, kun kuittauspyynnön (POLL)
+  alkumerkki tulkittiin alkavaksi dataryöpyksi. Korjattu: muu kuin datakehys
+  nollaa ryöppyhavainnon. Löytyi kehystason testillä.
+- Täsmälleen yhtäaikainen lähetys ei ratkea aina: satunnaisen odotuksen
+  pitää erota yli alkumerkin havaitsemisviiveen (noin 0,2 s). Odotusväli
+  levennettiin 0,3–1,2 sekunnista 0,2–2,2 sekuntiin, jolloin yli 93 %
+  ratkeaa kolmella yrityksellä. Kirjattu tunnetuksi rajoitukseksi.
+- Siirtoaika-arvio (DESIGN.md luku 6) osui mitattuun muutaman prosentin tarkkuudella.
+
+**Testattu:** vain simulaatiossa (kehystaso: 33 testiä; äänitaso: 8 sessiotestiä
+ja mittausajo). Linkkikerrosta ei ole vielä ajettu oikealla äänellä.

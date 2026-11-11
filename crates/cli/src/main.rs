@@ -8,6 +8,7 @@ mod compare;
 mod corpus;
 mod explore;
 mod json;
+mod session;
 
 use args::Args;
 use json::Json;
@@ -28,7 +29,11 @@ Tiedostot:
                                                           Yksi siirto simuloidun kanavan läpi
 
 Mittaus:
-  bench [--phy P] [--seeds 12] [--quick] [--no-save]      Mittausajo ja pistetaulu
+  bench [--phy P] [--seeds N] [--quick] [--no-save] [--oneway] [--handshake] [--burst N] [--holdout]
+                                                          Mittausajo ja pistetaulu. Oletus: koko sessio kahden
+                                                          aseman välillä. --oneway: pelkkä fyysinen kerros.
+  session [--profile huone] [--snr 20] [--seed 1] [--len N] [--handshake] [--burst N] [\"teksti\"]
+                                                          Yksi sessio simulaattorissa tapahtumalokeineen
   compare [uusi.json] [--baseline bench/baseline.json]    Vertaa ajoa perustasoon
   baseline [ajo.json]                                     Aseta ajo (oletus: uusin) perustasoksi
   profiles                                                Listaa kanavaprofiilit
@@ -55,6 +60,7 @@ fn main() -> ExitCode {
         "decode" => cmd_decode(rest),
         "sim" => cmd_sim(rest),
         "bench" => cmd_bench(rest),
+        "session" => session::cmd_session(rest),
         "compare" => cmd_compare(rest),
         "baseline" => cmd_baseline(rest),
         "audio-test" => acoustic::cmd_audio_test(rest),
@@ -220,16 +226,28 @@ fn load_json(path: &Path) -> Result<Json, String> {
 }
 
 fn cmd_bench(raw: &[String]) -> Result<ExitCode, String> {
-    let a = Args::parse(raw, &["quick", "no-save", "holdout"])?;
+    let a = Args::parse(raw, &["quick", "no-save", "holdout", "oneway", "handshake"])?;
     let kind = phy_arg(&a)?;
-    let seeds: u32 = a.num("seeds", if a.has("quick") { 4 } else { 12 })?;
+    let oneway = a.has("oneway");
     let threads: usize = a.num("threads", std::thread::available_parallelism().map_or(4, |n| n.get()))?;
     let started = std::time::Instant::now();
     let mut profiles = bench::synthetic_profiles();
     profiles.extend(bench::measured_profiles(a.has("holdout")));
-    let results = bench::run_profiles(&bench::BenchOptions { kind, seeds, threads }, &profiles);
     let corpus_score = corpus::run_regression(Some(kind), a.has("holdout"), false);
-    let board = bench::Scoreboard::oneway(kind, seeds, results, corpus_score);
+    let board = if oneway {
+        let seeds: u32 = a.num("seeds", if a.has("quick") { 4 } else { 12 })?;
+        let results = bench::run_profiles(&bench::BenchOptions { kind, seeds, threads }, &profiles);
+        bench::Scoreboard::oneway(kind, seeds, results, corpus_score)
+    } else {
+        // Sessiotila: siirtoaika ja onnistuminen koko protokollalla. Marginaaliluvut
+        // (BER, korjatut tavut) mitataan pienellä yksisuuntaisella ajolla.
+        let seeds: u32 = a.num("seeds", if a.has("quick") { 2 } else { 6 })?;
+        let (link, desc) = session::link_config(&a)?;
+        let opts = bench::BenchOptions { kind, seeds, threads };
+        let phy = bench::Scoreboard::oneway(kind, 3, bench::run_profiles(&bench::BenchOptions { kind, seeds: 3, threads }, &profiles), corpus_score);
+        let results = session_grid(&opts, &profiles, kind, &link);
+        bench::Scoreboard::session(kind, seeds, &desc, results, &phy, corpus_score)
+    };
     board.print();
     println!("\n(ajo kesti {:.1} s)", started.elapsed().as_secs_f64());
     if !a.has("no-save") {
@@ -240,6 +258,18 @@ fn cmd_bench(raw: &[String]) -> Result<ExitCode, String> {
         println!("tallennettu: {}", path.display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Sessiotilan ajo: jokainen profiili erikseen, jotta työ tietää profiilinsa.
+fn session_grid(opts: &bench::BenchOptions, profiles: &[bench::Profile], kind: PhyKind, link: &modem_core::link::LinkConfig) -> Vec<bench::ProfileResult> {
+    let mut out = Vec::new();
+    for i in 0..profiles.len() {
+        let one = &profiles[i..i + 1];
+        let p = &profiles[i];
+        let job = move |cfg: &modem_core::sim::OneWay, seed: u64| session::session_point(kind, p, cfg, cfg.snr_db, seed, link);
+        out.extend(bench::run_grid(opts, one, session::SESSION_GRID, &job));
+    }
+    out
 }
 
 fn cmd_compare(raw: &[String]) -> Result<ExitCode, String> {
