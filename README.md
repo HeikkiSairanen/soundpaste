@@ -22,7 +22,7 @@ enimmäisviesti noin 16 sekunnissa. Siirto ei ole salattu.
 | `web/` | Julkaistava sivu: `index.html`, `style.css`, `app.js` (pääsäie), `worklet.js` (äänisäie) |
 | `dev/` | Testiaseman selainkoodi. Vain kehityspalvelin tarjoilee sen |
 | `bench/` | Mittausajojen tulokset (`results/`), perustaso (`baseline.json`), yksittäiset kokeet (`kokeet/`) |
-| `corpus/` | Oikeat äänitteet: kanavamittaukset (`kanava/`) ja modeemilähetykset (`lahetys/`) |
+| `corpus/` | Oikeat äänitteet: kanavamittaukset (`kanava/`) ja modeemilähetykset (`lahetys/`). Ei versionhallinnassa: syntyy omilla mittauksilla |
 
 Sama tilakone (`Station`: modeemi + linkkikerros) pyörii selaimessa,
 komentorivillä ja simulaattorissa.
@@ -76,6 +76,11 @@ Mitatut kanavat (`corpus/kanava/`) ovat automaattisesti mittausajon
 profiileina (`m:...`), ja lähetysäänitteet (`corpus/lahetys/`) ajetaan
 jokaisen mittausajon yhteydessä. Osa aineistosta on merkitty
 vertailuaineistoksi (`"holdout": true`), jota ei käytetä virittämiseen.
+
+Korpus on huoneäänitteitä, joten sitä ei jaeta lähdekoodin mukana. Ilman sitä
+mittausajo toimii pelkillä synteettisillä profiileilla, ja `bench/`-hakemiston
+tulosten korpusrivit ja `m:`-profiilit jäävät pois. Oman korpuksen saa kohdan C
+komennoilla.
 
 ### C. Akustinen kehä Macilla (kymmeniä sekunteja, kuuluu ääntä)
 
@@ -183,3 +188,7 @@ MIME-tyypillä.
 - Hyvin kaikuisa tila (jälkikaiunta yli noin sekunnin ja koneet kaukana
   toisistaan) ei toimi; kestävämpi tila on suunniteltu mutta ei toteutettu.
 - Tarkemmin: DESIGN.md luku 8 ja CLAUDE.md.
+
+## Lisenssi
+
+MIT, katso `LICENSE`.

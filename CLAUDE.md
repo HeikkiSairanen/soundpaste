@@ -14,7 +14,8 @@ Dokumentit, käyttöliittymä ja koodin kommentit ovat suomeksi, tunnisteet engl
   (aaltomuodot, `PhyKind`), `sim` (kanavasimulaattori), `crc`, `wav`, `rng`.
 - `crates/cli`: `soundpaste`-komento. Ei riippuvuuksia (oma JSON ja argumentit).
 - `bench/results/`: mittausajot JSON-muodossa, `bench/baseline.json`: perustaso.
-- `corpus/`: oikeat äänitteet (kanavamittaukset ja modeemilähetykset).
+- `corpus/`: oikeat äänitteet (kanavamittaukset ja modeemilähetykset). Vain paikallisesti,
+  ei versionhallinnassa (käyttäjän päätös: huoneäänitteitä ei julkaista).
 
 ## Kehityssyklin komennot
 
