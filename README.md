@@ -1,6 +1,6 @@
 # soundpaste
 
-Send a short text (a link, a password, a code snippet) to the computer next to
+Send a short text (a link, a note, a code snippet) to the computer next to
 you by sound. One computer plays through its speaker, the other listens with
 its microphone and acknowledges by sound. There is no server: everything
 happens in the browser.
@@ -184,7 +184,8 @@ server. The server must serve `.wasm` with the MIME type `application/wasm`.
 ## Known limitations
 
 - Only two devices at a time: several receivers would acknowledge on top of each other.
-- No encryption and no authentication.
+- No encryption and no authentication: any device within earshot can receive the
+  message. Do not send passwords or other secrets with it.
 - A very reverberant space (reverberation time over about a second with the
   computers far apart) does not work; a more robust mode is designed but not
   implemented.
