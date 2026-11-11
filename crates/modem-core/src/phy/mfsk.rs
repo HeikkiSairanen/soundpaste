@@ -65,6 +65,10 @@ pub struct MfskParams {
     pub erasure_ratio: f32,
     /// Alkumerkin havaintokynnys: korrelaatiohuipun teho suhteessa taustaan.
     pub detect_threshold: f32,
+    /// Alkumerkin muototarkistus: kuinka suuri osa ikkunan kaistaenergiasta
+    /// selittyy pyyhkäisyllä (0..1). Naksahdus tai puhe ylittää tehokynnyksen,
+    /// mutta ei näytä pyyhkäisyltä. 0 = tarkistus pois.
+    pub chirp_fraction: f32,
     /// Ilmaisuikkunaa aikaistetaan tämän verran ajoitusvirheen varalta (s).
     pub timing_advance_s: f64,
     /// Lähetteen tehollisarvo ja huippujen leikkausraja (täysi asteikko 1.0).
@@ -89,9 +93,10 @@ pub const BASE: MfskParams = MfskParams {
     layout: ByteLayout::Freq,
     erasure_ratio: 2.0,
     detect_threshold: 25.0,
+    chirp_fraction: 0.08,
     timing_advance_s: 0.001,
-    rms: 0.25,
-    clip: 0.5,
+    rms: 0.45,
+    clip: 0.9,
 };
 
 impl MfskParams {
@@ -295,6 +300,10 @@ impl Modulator for MfskModulator {
 struct ChirpCorrelator {
     nfft: usize,
     lags: usize,
+    /// Muototarkistuksen FFT (yhden alkumerkin mittainen ikkuna) ja kaistan rajat sen taajuuslokeroina.
+    shape_fft: Fft,
+    shape_bins: (usize, usize),
+    chirp_len: usize,
     fft: Fft,
     t_re: Vec<f32>,
     t_im: Vec<f32>,
@@ -319,7 +328,25 @@ impl ChirpCorrelator {
             t_im[i] = ph.sin() as f32;
         }
         fft.forward(&mut t_re, &mut t_im);
-        ChirpCorrelator { nfft, lags: nfft - lc + 1, fft, t_re, t_im, re: vec![0.0; nfft], im: vec![0.0; nfft] }
+        let shape_n = next_pow2(lc);
+        let (lo, hi) = p.band();
+        let bin = |f: f64| (f * shape_n as f64 / fs).round() as usize;
+        ChirpCorrelator { nfft, lags: nfft - lc + 1, shape_fft: Fft::new(shape_n), shape_bins: (bin(lo), bin(hi).min(shape_n / 2)), chirp_len: lc, fft, t_re, t_im, re: vec![0.0; nfft], im: vec![0.0; nfft] }
+    }
+
+    /// Kuinka suuri osa ikkunan `x` (yhden alkumerkin mitta) kaistaenergiasta on
+    /// pyyhkäisyä, kun korrelaation huipputeho oli `peak`. Puhtaalle pyyhkäisylle
+    /// tulos on 1, kohinalle ja naksahduksille lähellä nollaa.
+    fn chirp_fraction(&self, x: &[f32], peak: f32) -> f32 {
+        let n = self.shape_fft.len();
+        let mut re = vec![0.0f32; n];
+        let mut im = vec![0.0f32; n];
+        re[..x.len()].copy_from_slice(x);
+        self.shape_fft.forward(&mut re, &mut im);
+        // Parseval: kaistan energia aikatasossa = (2/N) · Σ |X_k|² kaistan lokeroista.
+        let band: f64 = (self.shape_bins.0..=self.shape_bins.1).map(|k| (re[k] as f64).powi(2) + (im[k] as f64).powi(2)).sum::<f64>() * 2.0 / n as f64;
+        // Pyyhkäisylle, jonka amplitudi on A: huipputeho = (A·L/2)² ja energia = A²·L/2.
+        (2.0 * peak as f64 / (band.max(1e-30) * self.chirp_len as f64)) as f32
     }
 
     /// `x`: nfft näytettä. Palauttaa tehon viiveille 0..lags.
@@ -456,10 +483,11 @@ impl MfskDemodulator {
         let ahead = self.chirp_len + self.peak_win;
         let usable = lags - ahead;
         let mut found = None;
+        let mut skip_until = 0usize;
         for i in 0..usable {
             let abs = self.search_pos + i as u64;
             let qi = h + i;
-            if abs < self.no_trigger_before || qi < self.ref_win {
+            if i < skip_until || abs < self.no_trigger_before || qi < self.ref_win {
                 continue;
             }
             let (a, b) = (qi - self.ref_win, qi - self.ref_gap);
@@ -469,6 +497,16 @@ impl MfskDemodulator {
                 // ääni tulee ennen heijastuksia.
                 let win = &q[qi..qi + ahead];
                 let (max_i, max) = win.iter().enumerate().fold((0, 0.0f32), |b, (j, &v)| if v > b.1 { (j, v) } else { b });
+                // Muototarkistus: onko huipun kohdalla oikeasti pyyhkäisy?
+                if self.p.chirp_fraction > 0.0 {
+                    let at = off + i + max_i;
+                    let fraction = self.corr.chirp_fraction(&self.buf[at..at + self.chirp_len], max);
+                    if fraction < self.p.chirp_fraction {
+                        // Naksahdus tai muu häiriö: ohitetaan ja jatketaan hakua sen jälkeen.
+                        skip_until = i + max_i + self.ref_gap;
+                        continue;
+                    }
+                }
                 let from = max_i.saturating_sub(self.peak_win);
                 let first = from + win[from..=max_i].iter().position(|&v| v >= 0.3 * max).unwrap_or(max_i - from);
                 found = Some(self.search_pos + (i + first) as u64);

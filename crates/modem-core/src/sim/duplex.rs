@@ -50,7 +50,7 @@ pub struct DuplexConfig {
 }
 
 /// Lähetteen tehollisarvo, jota vasten tasot skaalataan.
-const TX_RMS: f32 = 0.25;
+const TX_RMS: f32 = 0.45;
 
 struct Mic {
     cross: Path,

@@ -93,6 +93,11 @@ pub static MFSK_PRESETS: &[mfsk::MfskParams] = &[
     mfsk::MfskParams { name: "v1-time", layout: mfsk::ByteLayout::Time, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-p3", parity_num: 1, parity_den: 3, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-g2", g: 2, ..mfsk::BASE },
+    // Alkumerkin muototarkistuksen kynnykset (EXPERIMENTS.md kohta 5).
+    mfsk::MfskParams { name: "v1-cf0", chirp_fraction: 0.0, ..mfsk::BASE },
+    mfsk::MfskParams { name: "v1-cf03", chirp_fraction: 0.03, ..mfsk::BASE },
+    mfsk::MfskParams { name: "v1-cf06", chirp_fraction: 0.06, ..mfsk::BASE },
+    mfsk::MfskParams { name: "v1-cf12", chirp_fraction: 0.12, ..mfsk::BASE },
 ];
 
 impl PhyKind {

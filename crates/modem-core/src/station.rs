@@ -171,9 +171,23 @@ impl Station {
                     let end = self.ms(stats.end_sample).min(now);
                     self.link.on_frame(end, &payload, Quality::from_stats(stats.snr_db, stats.rms, stats.clipped));
                 }
-                PhyEvent::Failed { .. } => {
+                PhyEvent::Failed { reason, stats, .. } => {
                     self.stats.frames_failed += 1;
-                    self.link.on_rx_failed(now);
+                    // Vianetsintään: hylätyt kehykset näkyvät lokissa tasoineen.
+                    self.events.push_back(Event::Log(format!(
+                        "<- kehys hylätty ({}), snr={:.0} dB taso={:.0} dBFS leikkautunut={:.0} %",
+                        match reason {
+                            crate::phy::FailReason::Header => "otsake",
+                            crate::phy::FailReason::Checksum => "tarkistussumma",
+                        },
+                        stats.snr_db,
+                        20.0 * stats.rms.max(1e-7).log10(),
+                        stats.clipped * 100.0
+                    )));
+                    // Vain kehys, jonka otsake purkautui, on varmasti oikea lähetys.
+                    if reason == crate::phy::FailReason::Checksum {
+                        self.link.on_rx_failed(now);
+                    }
                 }
             }
         }

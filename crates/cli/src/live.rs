@@ -129,6 +129,11 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let st = station.stats();
     println!("alkumerkkejä {}, ehjiä kehyksiä {}, hylättyjä {}, lähetettyjä {}, korjattuja tavuja {}", st.preambles, st.frames_ok, st.frames_failed, st.frames_sent, st.corrected);
 
+    // --record tiedosto.wav: koko mikrofoniäänite talteen analyysia varten.
+    if let Some(path) = a.str("record") {
+        std::fs::write(path, wav::encode_pcm16(FS, &recording)).map_err(|e| format!("{path}: {e}"))?;
+        println!("äänite: {path}");
+    }
     // Äänite korpukseen. Odotettu sisältö on se, mitä tämän aseman piti vastaanottaa.
     let expected: Option<Vec<u8>> = expect.as_ref().map(|s| s.as_bytes().to_vec()).or_else(|| received.first().cloned());
     if !a.has("no-save") {

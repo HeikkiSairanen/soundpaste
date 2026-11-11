@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "commit": "0cf87ca+muutoksia",
-  "time_utc": "20261111T085404Z",
+  "commit": "4f32c98+muutoksia",
+  "time_utc": "20261111T094653Z",
   "phy": "v1",
   "mode": "sessio: ryöppy, pikalähetys",
   "seeds": 6,
   "summary": {
-    "transfer_time_s": 2.816,
+    "transfer_time_s": 2.814,
     "transfer_note": "Lähetä-napista Perillä-ilmoitukseen, mediaani nimellisoloissa",
     "success_rate": 0.938889,
     "detect_rate": 1,
@@ -14,10 +14,10 @@
     "min_snr_db_room": -6,
     "ber_pre_fec": 0.00345,
     "corrected_per_frame": 0.704698,
-    "net_bytes_per_s": 21.306818,
+    "net_bytes_per_s": 21.321962,
     "frames_per_session": 0.127778,
-    "corpus_n": 2,
-    "corpus_ok": 2,
+    "corpus_n": 6,
+    "corpus_ok": 6,
     "corpus_rate": 1,
     "holdout_n": 0,
     "holdout_ok": 0
@@ -137,7 +137,7 @@
       "holdout": false,
       "min_snr_db": -6,
       "points": [
-        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 46, "median_ms": null},
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 47, "median_ms": null},
         {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 56, "median_ms": 2905},
         {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 2807},
         {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2930},
@@ -265,13 +265,13 @@
       "points": [
         {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 7, "median_ms": 2825},
         {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 2944},
-        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 2978},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2963},
         {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 3, "median_ms": 2895},
-        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2787},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2745},
         {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2827},
-        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2961},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2901},
         {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2868},
-        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2793},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2753},
         {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 2853}
       ]
     },
@@ -285,11 +285,11 @@
         {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 4, "median_ms": 2836},
         {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 2865},
         {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 2785},
-        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 3010},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 2934},
         {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 2807},
         {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 3, "median_ms": 2891},
         {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 2903},
-        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 2925},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 2841},
         {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 2771}
       ]
     }

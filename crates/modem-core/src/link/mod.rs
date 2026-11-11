@@ -348,25 +348,22 @@ impl Link {
         }
     }
 
-    fn foreign_signal(&mut self, now: Ms) {
+    /// Alkumerkki havaittu. Lasketaan vain kanavan varaukseksi: pelkkä alkumerkki
+    /// voi olla väärä hälytys (naksahdus, puhe), joten se ei laukaise kuittausta.
+    pub fn on_preamble(&mut self, now: Ms) {
         self.activity(now);
-        // Alkumerkki tai rikkinäinen kehys vastaanoton aikana tarkoittaa, että
-        // ryöppy on käynnissä. Oman lähetyksen kaiku suljetaan pois ajan perusteella.
+    }
+
+    /// Kehyksen otsake purkautui, mutta hyötykuorma ei: joku lähettää oikeasti.
+    /// Vastaanoton aikana se tarkoittaa, että ryöppy on käynnissä. Oman
+    /// lähetyksen kaiku suljetaan pois ajan perusteella.
+    pub fn on_rx_failed(&mut self, now: Ms) {
+        self.activity(now);
         if !self.in_flight && now >= self.last_tx_done + self.cfg.echo_fallback {
             if let Some(inc) = self.incoming.as_mut() {
                 inc.burst_seen = true;
             }
         }
-    }
-
-    /// Alkumerkki havaittu.
-    pub fn on_preamble(&mut self, now: Ms) {
-        self.foreign_signal(now);
-    }
-
-    /// Kehys havaittiin, mutta sitä ei saatu purettua.
-    pub fn on_rx_failed(&mut self, now: Ms) {
-        self.foreign_signal(now);
     }
 
     /// Oma lähetys on soitettu loppuun (äänen lähtöpuskurin aikajanalla).

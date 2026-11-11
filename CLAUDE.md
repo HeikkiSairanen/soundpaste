@@ -44,7 +44,7 @@ cargo build --release -q
 ./target/release/soundpaste remote tila         # testiasemien tila; remote laheta/tila kaiku/keraa N
 ```
 
-Älä putkita `measure`- tai `acoustic`-komentoa `head`:iin: katkennut putki
+Älä putkita `measure`-, `acoustic`- tai `bench`-komentoa `head`:iin (ohjaa tiedostoon): katkennut putki
 kaataa ohjelman ennen tallennusta.
 
 ## Parannussykli
@@ -82,7 +82,8 @@ kaataa ohjelman ennen tallennusta.
 
 - `halli` (RT60 1,2 s, kaiku suoraa ääntä voimakkaampi) ei toimi. Korjaus olisi
   DESIGN.md:n luvun 7 kestävä tila; käyttäjä päätti jättää sen pois, kunnes käytäntö vaatii.
-- Kahden koneen välillä ei ole vielä mitattu mitään. Toisen koneen kanava on arvio.
+- Kahden koneen välillä on ajettu yksi istunto (PC:n selain -> Mac toimii, EXPERIMENTS.md kohta 5).
+  Mac -> PC vaati kovan äänenvoimakkuuden. PC:n päästä ei ole lokeja eikä kanavamittausta.
 - Täsmälleen yhtäaikainen lähetys (alle 0,2 s) ratkeaa noin 93 %:ssa tapauksista.
 
 ## Seuraavaksi kokeilemisen arvoista

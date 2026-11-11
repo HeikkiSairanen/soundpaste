@@ -233,3 +233,61 @@ SoX:n kautta) ja Chromen sivu jakavat saman kaiuttimen ja mikrofonin.
 
 **Rajaus.** Tämä on edelleen yhden laitteen kaiutin ja mikrofoni. Kahden
 koneen välistä kanavaa (kehä E) ei ole vielä ajettu.
+
+## 5. Kehä E, ensimmäinen kahden koneen ajo: väärät hälytykset ja hiljainen paluusuunta (2026-11-11)
+
+**Asetelma.** PC:n selaimessa julkaistu sivu (sairanen.org/soundpaste), Macilla
+komentoriviasema (`soundpaste live`), joka äänitti neljä minuuttia. Käyttäjä
+lähetti PC:ltä viestejä. Äänite: `devdata/diag-pc.wav` (ei versionhallinnassa),
+siitä kolme leikettä korpuksessa (`...-pc-mac-1..3-sessio-v1`).
+
+**Harha-askel.** Ensimmäiset "perillä"-tulokset tulkitsin PC:n kuittauksiksi,
+mutta kuittaukset tulivat Macin omasta selaimesta, jossa sivu oli myös auki.
+Paljastui äänitteen tasoista: kuittaus kuului täsmälleen samalla tasolla
+(-39 dBFS) kuin oma lähetys. Opetus: kahden koneen testissä vastaajan
+tunnistaminen vaatii tason tai lokin, ei pelkkää kuittausta.
+
+**Havainnot oikeasta datasta.**
+
+| havainto | luku |
+|---|---|
+| PC -> Mac: aloituskehykset purkautuivat | kaikki, SNR 17–27 dB, taso -36…-44 dBFS |
+| Mac -> PC: kuittaus ei aluksi kuulunut | PC toisti saman aloituksen 3 kertaa; korjaantui, kun äänenvoimakkuutta nostettiin |
+| kaksoiskappaleiden tunnistus | toimi: viesti näkyi Macilla kerran, vaikka aloitus tuli kolmesti |
+| vääriä alkumerkkihavaintoja | 246 neljässä minuutissa (ryppäinä, näppäimistön naputus) |
+| turhia kuittauslähetyksiä väärien havaintojen takia | 6 yhden keskeneräisen session aikana |
+
+**Hypoteesi.** Naksahdus ylittää suhteellisen tehokynnyksen, koska sitä
+edeltää hiljaisuus, mutta se ei näytä pyyhkäisyltä. Tarkistus "kuinka suuri
+osa alkumerkin mittaisen ikkunan kaistaenergiasta selittyy pyyhkäisyllä"
+(puhdas pyyhkäisy 1, naksahdus lähellä 0) poistaa väärät hälytykset
+heikentämättä herkkyyttä.
+
+| kynnys (`chirp_fraction`) | vääriä hälytyksiä äänitteessä | oikeita kehyksiä (44) | alin SNR simulaatiossa |
+|---|---|---|---|
+| 0 (ei tarkistusta) | 246 | 44 | perustaso |
+| 0,03 | 110 | 44 | – |
+| 0,06 | 2 | 44 | sama kaikissa profiileissa |
+| 0,08 (valittu) | 0 | 44 | sama |
+| 0,12 | 0 | 44 | sama kaikissa profiileissa |
+
+Hypoteesi piti. Simulaatiossa kynnyksellä ei ollut mitään hintaa yhdessäkään
+profiilissa. Valittu 0,08 jättää varaa molempiin suuntiin, mutta se on
+viritetty yhden äänitteen perusteella: heikon oikean signaalin raja kaiussa
+on mittaamatta oikealla äänellä.
+
+**Muut muutokset.**
+- Linkkikerros: pelkkä alkumerkkihavainto ei enää laukaise hiljaisuuteen
+  perustuvaa kuittausta. Vain kehys, jonka otsake purkautui, lasketaan
+  merkiksi käynnissä olevasta ryöpystä.
+- Lähetteen taso +5 dB (tehollisarvo 0,25 -> 0,45, leikkausraja 0,5 -> 0,9),
+  koska paluusuunta oli liian hiljainen. Tämä ei korvaa äänenvoimakkuuden
+  nostamista, mutta siirtää rajaa.
+- Hylätyt kehykset näkyvät nyt lokissa tasoineen (vianetsintänäkymä).
+
+**Tulos.** Mittausajo ennallaan (2,81 s, 93,9 %, ei heikennyksiä), korpus 6/6
+tällä aaltomuodolla. Perustaso päivitetty.
+
+**Auki.** PC:n päästä ei ole lokeja eikä äänitteitä (julkaistu sivu ei lähetä
+niitä), joten Mac -> PC -suunnan taso, PC:n mikrofonin käsittely ja kanavan
+vaste ovat mittaamatta. Ne vaativat testiaseman (README, kehä E).
