@@ -415,6 +415,42 @@ mod tests {
         assert!(d.delivered_ms(0).is_some(), "{}", d.log());
     }
 
+    /// Every band either station transmitted on, from the log ("bands 3", "bands 0+1+2+3").
+    fn bands_sent(d: &Duplex, i: usize) -> std::collections::BTreeSet<u8> {
+        d.events[i]
+            .iter()
+            .filter_map(|e| match e {
+                Event::Log(s) if s.starts_with("-> ") => Some(s.clone()),
+                _ => None,
+            })
+            .flat_map(|s| s.split("bands ").nth(1).map(|b| b.trim_end_matches(')').split('+').map(|x| x.parse::<u8>().unwrap()).collect::<Vec<_>>()).unwrap_or_else(|| vec![0]))
+            .collect()
+    }
+
+    #[test]
+    fn ultrasonic_only_station_and_ladder_station_talk_silently() {
+        // The page's "ultrasonic handshake" switch: a single-band v1-us station. Both
+        // directions, and neither station may make a sound outside 17.6–20 kHz.
+        let us = PhyKind::Mfsk(&crate::phy::mfsk::ULTRASONIC);
+        for silent in [0, 1] {
+            let mut d = Duplex::new(&ladder_room(17 + silent as u64));
+            d.stations[silent] = Station::new(us, 48000.0, LinkConfig::default(), 5);
+            d.run(0.3);
+            d.stations[0].send(LINK).unwrap();
+            assert!(d.run_until(30.0, |d| d.settled(0)), "{}", d.log());
+            assert_eq!(d.received(1), vec![LINK.to_vec()], "{}", d.log());
+            assert!(d.delivered_ms(0).is_some(), "{}", d.log());
+            assert_eq!(bands_sent(&d, silent), [0].into(), "the silent station has one band, its own\n{}", d.log());
+            // The ladder station answered or sent only on its top band (3), apart from the
+            // first START's probes when it is the sender.
+            let ladder = 1 - silent;
+            let sent: Vec<_> = d.events[ladder].iter().filter_map(|e| match e { Event::Log(s) if s.starts_with("-> ") => Some(s.clone()), _ => None }).collect();
+            for s in &sent {
+                assert!(s.contains("bands 3") || s.contains("bands 0+1+2+3"), "{s}\n{}", d.log());
+            }
+        }
+    }
+
     #[test]
     fn ladder_both_press_send_and_both_messages_arrive() {
         let mut d = Duplex::new(&ladder_room(15));

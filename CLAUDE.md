@@ -80,7 +80,8 @@ Do not tune for a single room or device pair, and do not adjust tests to make th
   goes on the highest band the receiver hears at >= 12 dB and the answers on the highest
   band the sender hears (entry 9), fallback to the normal band. 60-char link about
   8.6 s (v1 alone 2.85 s). Loop D works on band 3. Mac <-> PC: the PC's speakers carry
-  only the normal band. `--phy ladder` in bench/session/live.
+  only the normal band. `--phy ladder` in bench/session/live. Page switches: *Audible
+  only* (single-band v1) and *Ultrasonic handshake* (single-band v1-us).
 - Baseline `bench/baseline.json`: session mode, 60-character link 2.85 s, success
   94.2 % in nominal conditions (the missing part is the `hall` profile, which does not
   work), lowest SNR in a room -6 dB.

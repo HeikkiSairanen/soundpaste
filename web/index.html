@@ -13,8 +13,28 @@
 <main>
   <header>
     <h1>soundpaste</h1>
-    <p class="lead">Send a short text to the computer next to you by sound. Open this page on both computers and press Start. A short audible handshake comes first; the message itself goes on the highest pitch both computers can hear, often too high for adults to notice.</p>
+    <p class="lead">Send a short text to the computer next to you by sound. Open this page on both computers and press Start. By default a short audible handshake comes first, and the message itself goes on the highest pitch the other computer can hear, often too high for adults to notice.</p>
   </header>
+
+  <section id="mode-section" aria-labelledby="mode-title">
+    <h2 id="mode-title" class="visually-hidden">Frequencies</h2>
+    <div class="mode-row">
+      <label class="switch">
+        <input type="checkbox" id="mode-audible" role="switch" aria-describedby="mode-audible-hint">
+        <span>Audible only</span>
+        <span class="state" aria-hidden="true"></span>
+      </label>
+      <p id="mode-audible-hint" class="small">Everything at 1–7.4 kHz. The fastest and most robust, but you hear the whole transfer.</p>
+    </div>
+    <div class="mode-row">
+      <label class="switch">
+        <input type="checkbox" id="mode-ultrasonic" role="switch" aria-describedby="mode-ultrasonic-hint">
+        <span>Ultrasonic handshake</span>
+        <span class="state" aria-hidden="true"></span>
+      </label>
+      <p id="mode-ultrasonic-hint" class="small">Everything at 17.6–20 kHz, the handshake too: silent to most adults. Both computers' speakers and microphones must reach 20 kHz.</p>
+    </div>
+  </section>
 
   <section id="start-section" aria-labelledby="start-title">
     <h2 id="start-title" class="visually-hidden">Setup</h2>

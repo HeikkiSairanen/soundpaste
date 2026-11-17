@@ -35,7 +35,24 @@
     bandTops: [],
     txBand: '',
     rxBand: '',
+    // Frequency mode: 'auto' (the ladder), 'audible' or 'ultrasonic' (the switches), and
+    // the one band a single-band mode uses, as text.
+    mode: initialMode(),
+    fixedBand: '',
+    receiving: false,
   };
+
+  // The switches remember their position in this browser; ?mode=auto|audible|ultrasonic
+  // (or the older ?bands=normal) overrides.
+  function initialMode() {
+    const asked = params.get('mode') || (params.get('bands') === 'normal' ? 'audible' : null);
+    if (['auto', 'audible', 'ultrasonic'].includes(asked)) return asked;
+    try {
+      const saved = localStorage.getItem('soundpaste.bandMode');
+      if (saved === 'audible' || saved === 'ultrasonic') return saved;
+    } catch (err) { /* private window: default */ }
+    return 'auto';
+  }
 
   // ------------------------------------------------------------------ log
 
@@ -133,14 +150,46 @@
     return response.arrayBuffer();
   }
 
-  // Troubleshooting flags: ?handshake=1 (single band only) and ?bands=normal (no ladder).
+  // Station flags: the frequency mode, and ?handshake=1 for troubleshooting.
   function stationFlags() {
-    return (params.get('handshake') === '1' ? 1 : 0) | (params.get('bands') === 'normal' ? 2 : 0);
+    return (params.get('handshake') === '1' ? 1 : 0) | (app.mode === 'audible' ? 2 : 0) | (app.mode === 'ultrasonic' ? 4 : 0);
+  }
+
+  function newSeed() {
+    const seed = crypto.getRandomValues(new Uint32Array(2));
+    return [seed[0], seed[1]];
   }
 
   function loadWasm(buffer) {
-    const seed = crypto.getRandomValues(new Uint32Array(2));
-    app.node.port.postMessage({ type: 'load', wasm: buffer, seed: [seed[0], seed[1]], flags: stationFlags() }, [buffer]);
+    app.node.port.postMessage({ type: 'load', wasm: buffer, seed: newSeed(), flags: stationFlags() }, [buffer]);
+  }
+
+  // ------------------------------------------------------------------ frequency switches
+
+  // The two switches exclude each other: both off is the automatic ladder.
+  function setMode(mode) {
+    app.mode = mode;
+    showMode();
+    try { localStorage.setItem('soundpaste.bandMode', mode); } catch (err) { /* private window */ }
+    if (!app.ready) return; // applied when the modem starts
+    app.ready = false;
+    updateModeControls();
+    log(`switching to ${MODE_TEXT[mode]}`);
+    app.node.port.postMessage({ type: 'mode', seed: newSeed(), flags: stationFlags() });
+  }
+
+  const MODE_TEXT = { auto: 'automatic frequencies', audible: 'audible frequencies only', ultrasonic: 'ultrasonic only' };
+
+  function showMode() {
+    $('mode-audible').checked = app.mode === 'audible';
+    $('mode-ultrasonic').checked = app.mode === 'ultrasonic';
+  }
+
+  function updateModeControls() {
+    // A switch rebuilds the modem, which would drop a transfer in progress.
+    const busy = app.sending || app.receiving || (app.node !== null && !app.ready);
+    $('mode-audible').disabled = busy;
+    $('mode-ultrasonic').disabled = busy;
   }
 
   function kHz(hz) {
@@ -166,14 +215,23 @@
         app.ready = true;
         app.maxMessage = m.maxMessage;
         app.sending = false;
+        app.receiving = false;
         app.bandTops = m.bandTops || [];
+        app.fixedBand = app.bandTops.length === 1 ? bandText(m.bandLows[0], app.bandTops[0]) : '';
+        if (app.mode === 'ultrasonic' && app.bandTops[0] !== 20000) {
+          // 17.6–20 kHz does not fit under this device's sample rate: the station runs the ladder.
+          app.mode = 'auto';
+          showMode();
+          $('mode-ultrasonic-hint').textContent = `Not possible here: the audio runs at ${m.sampleRate} Hz, and 20 kHz needs 44.1 kHz or more.`;
+          log(`ultrasonic only is not possible at ${m.sampleRate} Hz`);
+        }
         $('start-section').hidden = true;
         for (const id of ['meter-section', 'send-section', 'receive-section']) $(id).hidden = false;
         $('download').disabled = false;
-        log(`modem ready: ${m.sampleRate} Hz, listening on ${app.bandTops.length} ${app.bandTops.length === 1 ? 'band' : 'bands'} up to ${kHz(Math.max(0, ...app.bandTops))} kHz, maximum message length ${m.maxMessage} bytes`);
+        log(`modem ready (${MODE_TEXT[app.mode]}): ${m.sampleRate} Hz, listening on ${app.bandTops.length} ${app.bandTops.length === 1 ? 'band' : 'bands'} up to ${kHz(Math.max(0, ...app.bandTops))} kHz, maximum message length ${m.maxMessage} bytes`);
         updateInput();
         setSending(false);
-        emit({ kind: 'ready', sampleRate: m.sampleRate, bandTops: app.bandTops });
+        emit({ kind: 'ready', sampleRate: m.sampleRate, bandTops: app.bandTops, mode: app.mode });
         break;
       case 'events':
         app.stationNow = m.now;
@@ -256,6 +314,9 @@
         setTx(`Failed: ${FAIL_TEXT[reason] || 'unknown reason.'}`, false);
         const advice = $('tx-advice');
         advice.textContent = HINT_ADVICE[hint] || FAIL_ADVICE[reason] || '';
+        if (app.mode === 'ultrasonic' && advice.textContent) {
+          advice.textContent += ' Ultrasonic handshake is on: the other computer must have it on too, or have both switches off, and both must reach 20 kHz. Turn it off to let the computers fall back to audible frequencies.';
+        }
         advice.hidden = !advice.textContent;
         emit({ kind: 'failed', reason, hint, quality: hasQuality ? { snrDb: dv.getInt8(4), levelDb: dv.getInt8(5), clipped: !!b[6] } : null });
         break;
@@ -267,7 +328,8 @@
         break;
       case 5: { // receiving started
         const len = dv.getUint32(3, true);
-        app.rxBand = '';
+        app.rxBand = app.fixedBand;
+        setReceiving(true);
         $('rx-status').textContent = `Receiving a message (${len} bytes)…`;
         $('rx-status').classList.remove('ok');
         const progress = $('rx-progress');
@@ -290,6 +352,7 @@
         const len = dv.getUint32(3, true);
         const bytes = b.subarray(7, 7 + len);
         app.received = decoder.decode(bytes);
+        setReceiving(false);
         const el = $('received');
         el.textContent = app.received; // always as plain text
         el.hidden = false;
@@ -303,6 +366,7 @@
         break;
       }
       case 8:
+        setReceiving(false);
         $('rx-progress').hidden = true;
         $('rx-status').classList.remove('ok');
         $('rx-status').textContent = b[1] === 1 ? 'The sender cancelled.' : 'Nothing more was heard from the sender: the incomplete message was discarded.';
@@ -338,6 +402,12 @@
     $('cancel').hidden = !on;
     $('text').readOnly = on;
     updateInput();
+    updateModeControls();
+  }
+
+  function setReceiving(on) {
+    app.receiving = on;
+    updateModeControls();
   }
 
   function updateInput() {
@@ -364,7 +434,7 @@
     const bytes = encoder.encode(text);
     if (bytes.length > app.maxMessage) return false;
     $('tx-advice').hidden = true;
-    app.txBand = '';
+    app.txBand = app.fixedBand;
     setSending(true);
     setTx('Starting…', false);
     log(`sending ${bytes.length} bytes`);
@@ -447,6 +517,9 @@
 
   // ------------------------------------------------------------------ events
 
+  showMode();
+  $('mode-audible').addEventListener('change', (e) => setMode(e.target.checked ? 'audible' : 'auto'));
+  $('mode-ultrasonic').addEventListener('change', (e) => setMode(e.target.checked ? 'ultrasonic' : 'auto'));
   $('start').addEventListener('click', start);
   $('text').addEventListener('input', updateInput);
   $('send').addEventListener('click', () => send($('text').value));
@@ -483,7 +556,8 @@
     context: () => app.ctx,
     wavBytes,
     reloadWasm: (buffer) => { app.ready = false; loadWasm(buffer); },
-    state: () => ({ ready: app.ready, sending: app.sending, sampleRate: app.sampleRate, stats: app.stats, stationNow: app.stationNow, bandTops: app.bandTops, txBand: app.txBand, rxBand: app.rxBand }),
+    setMode,
+    state: () => ({ ready: app.ready, sending: app.sending, sampleRate: app.sampleRate, stats: app.stats, stationNow: app.stationNow, bandTops: app.bandTops, txBand: app.txBand, rxBand: app.rxBand, mode: app.mode }),
     log,
   };
 })();

@@ -8,8 +8,10 @@ happens in the browser.
 A transfer starts with a short audible handshake in the normal band (1–7.4 kHz)
 that also probes three higher bands, up to 17.6–20 kHz. The message then goes on
 the highest band both computers hear well, often too high for adults to notice
-([DESIGN.md 5.9](DESIGN.md)). `?bands=normal` on the page keeps everything in the
-normal band, for troubleshooting.
+([DESIGN.md 5.9](DESIGN.md)). Two switches on the page override this: *Audible
+only* keeps everything at 1–7.4 kHz, *Ultrasonic handshake* keeps everything,
+the handshake included, at 17.6–20 kHz. `?mode=auto|audible|ultrasonic` sets the
+mode from the address.
 
 - Page: https://heikkisairanen.github.io/soundpaste/ (publishing: see [Publishing](#publishing))
 - Design and rationale: [DESIGN.md](DESIGN.md)

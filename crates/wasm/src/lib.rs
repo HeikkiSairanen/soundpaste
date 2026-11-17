@@ -63,14 +63,25 @@ pub unsafe extern "C" fn sp_free(ptr: *mut u8, len: usize) {
 
 /// Create the station: by default on the band ladder (DESIGN.md 5.9), with the bands
 /// that fit under the sample rate. The sample rate comes from the AudioContext, the seed
-/// from the browser's random source. Flags (troubleshooting): bit 0 = always a separate
-/// handshake (no inline start; only matters on a single band), bit 1 = normal band only.
+/// from the browser's random source. Flags: bit 0 = always a separate handshake (no inline
+/// start; only matters on a single band), bit 1 = audible only (the normal band alone),
+/// bit 2 = ultrasonic only (17.6–20 kHz alone, handshake included; needs a sample rate that
+/// fits the band, otherwise the ladder). Calling it again replaces the station (the page's
+/// mode switches).
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn sp_new(sample_rate: f32, seed_lo: u32, seed_hi: u32, flags: u32) {
     let cfg = LinkConfig { inline_start: flags & 1 == 0, ..LinkConfig::default() };
     let seed = ((seed_hi as u64) << 32) | seed_lo as u64;
-    let bands = if flags & 2 != 0 { vec![PhyKind::DEFAULT] } else { modem_core::phy::ladder_for(sample_rate as f64) };
+    let ladder = modem_core::phy::ladder_for(sample_rate as f64);
+    let top = *modem_core::phy::LADDER.last().unwrap();
+    let bands = if flags & 2 != 0 {
+        vec![PhyKind::DEFAULT]
+    } else if flags & 4 != 0 && ladder.contains(&top) {
+        vec![top]
+    } else {
+        ladder
+    };
     let station = Station::with_bands(&bands, sample_rate as f64, cfg, seed);
     unsafe {
         STATE = Some(State { station, input: vec![0.0; MAX_BLOCK], output: vec![0.0; MAX_BLOCK] });
@@ -81,6 +92,12 @@ pub extern "C" fn sp_new(sample_rate: f32, seed_lo: u32, seed_hi: u32, flags: u3
 #[no_mangle]
 pub extern "C" fn sp_band_count() -> u32 {
     state().map_or(0, |s| s.station.bands().len() as u32)
+}
+
+/// Lowest frequency of band `i` in Hz (0 if there is no such band).
+#[no_mangle]
+pub extern "C" fn sp_band_low_hz(i: u32) -> u32 {
+    state().and_then(|s| s.station.bands().get(i as usize).map(|k| k.band_hz().0.round() as u32)).unwrap_or(0)
 }
 
 /// Highest frequency of band `i` in Hz (0 if there is no such band).
@@ -364,7 +381,12 @@ mod tests {
         sp_new(32000.0, 3, 4, 0);
         assert_eq!(sp_band_count(), 2);
         assert_eq!(sp_band_top_hz(1), 14400);
+        // Audible only, ultrasonic only, and ultrasonic where the rate does not allow it.
         sp_new(48000.0, 3, 4, 2);
-        assert_eq!(sp_band_count(), 1);
+        assert_eq!((sp_band_count(), sp_band_top_hz(0)), (1, 7400));
+        sp_new(48000.0, 3, 4, 4);
+        assert_eq!((sp_band_count(), sp_band_low_hz(0), sp_band_top_hz(0)), (1, 17600, 20000));
+        sp_new(32000.0, 3, 4, 4);
+        assert_eq!(sp_band_count(), 2);
     }
 }

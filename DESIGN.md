@@ -460,6 +460,12 @@ answers stay audible (EXPERIMENTS.md entry 9).
   and 0.9 s on a K 6 band), and the data travels at 38 % of v1's rate: the
   60-character link takes about 8.6 s instead of 2.85 s. When the probes come
   out too weak the transfer stays on band 0 and takes 5–6 s.
+- **Switches on the page.** *Audible only* makes the station a single-band `v1`
+  station, *Ultrasonic handshake* a single-band `v1-us` station (both with the
+  inline start). A ladder station talks to both: it hears every band, and an
+  answer without a report tells it the band the peer heard it on. The
+  ultrasonic station has no fallback: a peer that cannot hear 17.6–20 kHz is
+  not found.
 - **Several listeners.** Frames carry no station address, so every station
   that hears the START answers, and their reports merge. A band chosen on the
   strength of a third station that the real peer cannot hear ends in the
