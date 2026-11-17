@@ -20,7 +20,7 @@ pub const SESSION_GRID: &[f64] = &[-9.0, -6.0, -3.0, 0.0, 3.0, 6.0, 12.0, 18.0, 
 /// - Each station hears its own speaker four times louder than the other's.
 /// - Audio latencies are drawn at random: output 20–250 ms, input 10–150 ms.
 /// - The profile's interference (thump, speech) hits B's microphone during the data frame.
-pub fn duplex_config(kind: PhyKind, profile: &Profile, base: &OneWay, snr_db: f64, seed: u64, link: &LinkConfig) -> DuplexConfig {
+pub fn duplex_config(kinds: &[PhyKind], profile: &Profile, base: &OneWay, snr_db: f64, seed: u64, link: &LinkConfig) -> DuplexConfig {
     let mut rng = Rng::new(seed ^ 0xD0_91E5);
     let back = (profile.make)(snr_db, seed ^ 0x5A5A_1234);
     let noise_rms = base.rx_level / 10f32.powf(snr_db as f32 / 20.0);
@@ -47,7 +47,7 @@ pub fn duplex_config(kind: PhyKind, profile: &Profile, base: &OneWay, snr_db: f6
     // stretches in time by a few percent, which does not matter here.
     let a = side(base.fs_tx, &back.ir, Vec::new());
     let b = side(base.fs_rx, &base.ir, interference);
-    DuplexConfig { kind, sides: [a, b], clock_ppm: base.clock_ppm, seed }
+    DuplexConfig { kinds: kinds.to_vec(), sides: [a, b], clock_ppm: base.clock_ppm, seed }
 }
 
 pub struct SessionOutcome {
@@ -71,8 +71,8 @@ pub fn run_session(cfg: &DuplexConfig, msg: &[u8]) -> SessionOutcome {
     SessionOutcome { ok, elapsed_ms, data_and_polls, duplex: d }
 }
 
-pub fn session_point(kind: PhyKind, profile: &Profile, base: &OneWay, snr_db: f64, seed: u64, link: &LinkConfig) -> Point {
-    let cfg = duplex_config(kind, profile, base, snr_db, seed, link);
+pub fn session_point(kinds: &[PhyKind], profile: &Profile, base: &OneWay, snr_db: f64, seed: u64, link: &LinkConfig) -> Point {
+    let cfg = duplex_config(kinds, profile, base, snr_db, seed, link);
     let out = run_session(&cfg, bench::LINK60.as_bytes());
     let b = out.duplex.stations[1].stats();
     Point {
@@ -96,7 +96,7 @@ pub fn link_config(a: &Args) -> Result<(LinkConfig, String), String> {
 /// `soundpaste session`: run one session and print the events with timestamps.
 pub fn cmd_session(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &["handshake", "quiet"])?;
-    let kind = crate::phy_arg(&a)?;
+    let (kinds, phy_name) = crate::bands_arg(&a, false)?;
     let snr: f64 = a.num("snr", 20.0)?;
     let seed: u64 = a.num("seed", 1)?;
     let name = a.str_or("profile", "room");
@@ -111,8 +111,8 @@ pub fn cmd_session(raw: &[String]) -> Result<ExitCode, String> {
     profiles.extend(bench::measured_profiles(true));
     let profile = profiles.iter().find(|p| p.name == name).ok_or_else(|| format!("unknown profile '{name}'"))?;
     let base = (profile.make)(snr, seed);
-    let cfg = duplex_config(kind, profile, &base, snr, seed, &link);
-    println!("SESSION {} ({desc}), profile {name}, SNR {snr} dB, seed {seed}, message {} bytes", kind.name(), text.len());
+    let cfg = duplex_config(&kinds, profile, &base, snr, seed, &link);
+    println!("SESSION {phy_name} ({desc}), profile {name}, SNR {snr} dB, seed {seed}, message {} bytes", text.len());
     for (i, s) in cfg.sides.iter().enumerate() {
         println!("  station {}: {} Hz, output latency {:.0} ms, input latency {:.0} ms", ["A", "B"][i], s.fs, s.out_latency_s * 1e3, s.in_latency_s * 1e3);
     }

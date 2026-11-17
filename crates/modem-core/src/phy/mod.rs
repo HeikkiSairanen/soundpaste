@@ -101,7 +101,21 @@ pub static MFSK_PRESETS: &[mfsk::MfskParams] = &[
     // Ultrasonic mode (EXPERIMENTS.md entry 7).
     mfsk::ULTRASONIC,
     mfsk::MfskParams { name: "v1-us-freq", layout: mfsk::ByteLayout::Freq, ..mfsk::ULTRASONIC },
+    // Band ladder rungs (EXPERIMENTS.md entry 8).
+    mfsk::BAND12,
+    mfsk::BAND15,
 ];
+
+/// The band ladder, lowest first (DESIGN.md 5.9). Band 0 is the robust normal band that
+/// every negotiation starts from; a station listens on all of them at once and the
+/// sender moves as high as both directions allow.
+pub const LADDER: [PhyKind; 4] = [PhyKind::Mfsk(&mfsk::BASE), PhyKind::Mfsk(&mfsk::BAND12), PhyKind::Mfsk(&mfsk::BAND15), PhyKind::Mfsk(&mfsk::ULTRASONIC)];
+
+/// The ladder bands usable at sample rate `fs`: a band must end below 0.45·fs, where a
+/// device's anti-alias filter still passes it.
+pub fn ladder_for(fs: f64) -> Vec<PhyKind> {
+    LADDER.iter().copied().filter(|k| k.band_hz().1 <= 0.45 * fs + 1.0).collect()
+}
 
 impl PhyKind {
     /// Default waveform: the MFSK base version.
@@ -122,6 +136,14 @@ impl PhyKind {
 
     pub fn from_name(s: &str) -> Option<PhyKind> {
         Self::all().into_iter().find(|k| k.name() == s)
+    }
+
+    /// Lowest and highest frequency of the waveform (Hz).
+    pub fn band_hz(self) -> (f64, f64) {
+        match self {
+            PhyKind::V0Bfsk => (bfsk::F0, bfsk::F1),
+            PhyKind::Mfsk(p) => p.band(),
+        }
     }
 
     pub fn modulator(self, fs: f64) -> Box<dyn Modulator> {

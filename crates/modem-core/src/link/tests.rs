@@ -156,7 +156,7 @@ impl Net {
             node.link.tick(now, busy);
             while let Some(action) = node.link.poll_action() {
                 match action {
-                    Action::Transmit(bytes) => {
+                    Action::Transmit(bytes, _) => {
                         let frame = Frame::decode(&bytes).expect("the link sent an invalid frame");
                         assert!(node.tx_until.is_none(), "machine {i} sent a frame on top of the previous one");
                         let nth = self.counts.entry((i, frame.name())).or_insert(0);
@@ -562,12 +562,12 @@ fn failure_hint_comes_from_receiver_quality_report() {
         l.tick(now, false);
         while let Some(a) = l.poll_action() {
             match a {
-                Action::Transmit(bytes) => {
+                Action::Transmit(bytes, _) => {
                     let f = Frame::decode(&bytes).unwrap();
                     let id = f.id();
                     l.on_tx_done(now);
                     if f.name() == "START" {
-                        let ack = Frame::StartAck { id, quality: Quality { snr_db: 3, level_db: -70, clipped: false } };
+                        let ack = Frame::StartAck { id, quality: Quality { snr_db: 3, level_db: -70, clipped: false }, report: vec![] };
                         l.on_frame(now + 5, &ack.encode(), Quality::default());
                     }
                 }
@@ -650,7 +650,7 @@ fn corrupted_frame_passing_checks_triggers_restart() {
 #[test]
 fn stray_frames_are_ignored() {
     let mut l = Link::new(LinkConfig::default(), 1);
-    for f in [Frame::Data { id: 5, seq: 0, eob: true, data: vec![1] }, Frame::Ack { id: 5, quality: Quality::default(), restart: false, bitmap: vec![0xFF] }, Frame::Done { id: 5, crc: 1 }, Frame::Poll { id: 5 }, Frame::Cancel { id: 5 }, Frame::StartAck { id: 5, quality: Quality::default() }] {
+    for f in [Frame::Data { id: 5, seq: 0, eob: true, data: vec![1] }, Frame::Ack { id: 5, quality: Quality::default(), restart: false, bitmap: vec![0xFF] }, Frame::Done { id: 5, crc: 1 }, Frame::Poll { id: 5 }, Frame::Cancel { id: 5 }, Frame::StartAck { id: 5, quality: Quality::default(), report: vec![] }] {
         l.on_frame(100, &f.encode(), Quality::default());
     }
     l.on_frame(100, &[0xF0, 1, 2, 3], Quality::default());
@@ -661,4 +661,153 @@ fn stray_frames_are_ignored() {
     while let Some(a) = l.poll_action() {
         assert!(matches!(a, Action::Event(Event::Log(_))), "{a:?}");
     }
+}
+
+// ---------------------------------------------------------------- band ladder (DESIGN.md 5.9)
+
+/// Not heard on a band.
+const NO: i8 = i8::MIN;
+
+fn ladder() -> LinkConfig {
+    LinkConfig { bands: 4, ..LinkConfig::default() }
+}
+
+/// Run the link's clock in 10 ms steps until it transmits; returns the frame, its band
+/// mask, the time and the events on the way. The transmission is played to the end at once.
+fn next_tx(l: &mut Link, now: &mut Ms, limit: Ms) -> (Frame, u8, Vec<Event>) {
+    let mut events = Vec::new();
+    while *now < limit {
+        *now += 10;
+        l.tick(*now, false);
+        while let Some(a) = l.poll_action() {
+            match a {
+                Action::Transmit(bytes, mask) => {
+                    while let Some(Action::Event(e)) = l.poll_action() {
+                        events.push(e);
+                    }
+                    *now += 500;
+                    l.on_tx_done(*now);
+                    return (Frame::decode(&bytes).unwrap(), mask, events);
+                }
+                Action::Event(e) => events.push(e),
+                Action::AbortTx => {}
+            }
+        }
+    }
+    panic!("nothing was sent before {limit} ms; events {events:?}");
+}
+
+/// A sender on the ladder after the START exchange: the receiver reported `there`
+/// (its SNR per band for our START) and we heard its START_ACK with `back`.
+fn ladder_sender(there: [i8; 4], back: [i8; 4]) -> (Link, u16, Ms) {
+    let mut l = Link::new(ladder(), 7);
+    let id = l.send(0, &message(100)).unwrap();
+    let mut now = 0;
+    let (start, mask, _) = next_tx(&mut l, &mut now, 2000);
+    assert!(matches!(start, Frame::Start { inline: None, .. }), "no inline start on the ladder: {start:?}");
+    assert_eq!(mask, 0b1111, "the first START probes every band");
+    let report: Vec<(u8, i8)> = (0..4u8).filter(|&b| there[b as usize] != NO).map(|b| (b, there[b as usize])).collect();
+    now += 300;
+    for b in (0..4u8).filter(|&b| back[b as usize] != NO) {
+        let ack = Frame::StartAck { id, quality: Quality { snr_db: 20, level_db: -30, clipped: false }, report: report.clone() };
+        l.on_frame_band(now, &ack.encode(), Quality { snr_db: back[b as usize], level_db: -30, clipped: false }, b);
+    }
+    (l, id, now)
+}
+
+fn first_data_band(there: [i8; 4], back: [i8; 4]) -> u8 {
+    let (mut l, _, mut now) = ladder_sender(there, back);
+    let (f, mask, events) = next_tx(&mut l, &mut now, 5000);
+    assert!(matches!(f, Frame::Data { .. }), "{f:?}");
+    let band = mask.trailing_zeros() as u8;
+    assert_eq!(mask, 1 << band, "data goes on one band");
+    assert!(events.iter().any(|e| matches!(e, Event::Band { band: b, sending: true, .. } if *b == band)), "{events:?}");
+    band
+}
+
+#[test]
+fn ladder_picks_the_highest_band_heard_well_both_ways() {
+    assert_eq!(first_data_band([25, 25, 25, 25], [25, 25, 25, 25]), 3);
+    // The return direction does not carry band 3.
+    assert_eq!(first_data_band([25, 25, 25, 25], [25, 25, 25, NO]), 2);
+    // Band 2 heard, but below the margin; band 3 not heard at all.
+    assert_eq!(first_data_band([25, 25, 9, NO], [25, 25, 25, 25]), 1);
+    // Nothing above band 0 is good enough.
+    assert_eq!(first_data_band([25, 11, NO, NO], [25, 25, NO, NO]), 0);
+    // A peer without the ladder (no report) heard us on band 0 only.
+    let (mut l, id, mut now) = ladder_sender([NO; 4], [NO; 4]);
+    let old_style = Frame::StartAck { id, quality: Quality { snr_db: 30, level_db: -30, clipped: false }, report: vec![] };
+    l.on_frame_band(now, &old_style.encode(), Quality { snr_db: 30, level_db: -30, clipped: false }, 0);
+    let (_, mask, _) = next_tx(&mut l, &mut now, 5000);
+    assert_eq!(mask, 1);
+}
+
+#[test]
+fn ladder_falls_back_to_band_0_when_the_high_band_goes_silent() {
+    let (mut l, id, mut now) = ladder_sender([25; 4], [25; 4]);
+    let (_, mask, _) = next_tx(&mut l, &mut now, 5000);
+    assert_eq!(mask, 1 << 3);
+    // No reply at all on band 3: the polls go there first, then to band 0.
+    let mut masks = Vec::new();
+    let mut fell_back = false;
+    while masks.len() < 4 {
+        let limit = now + 10_000;
+        let (f, mask, events) = next_tx(&mut l, &mut now, limit);
+        fell_back |= events.iter().any(|e| matches!(e, Event::Band { band: 0, sending: true, .. }));
+        match f {
+            Frame::Data { .. } => assert_eq!(mask, 8, "the rest of the burst stays on band 3"),
+            Frame::Poll { .. } => masks.push(mask),
+            f => panic!("{f:?}"),
+        }
+    }
+    assert_eq!(masks, [8, 8, 8, 1]);
+    assert!(fell_back);
+    // The receiver answers on band 0, and the message is delivered.
+    let crc = crc32(&message(100));
+    l.on_frame_band(now + 300, &Frame::Done { id, crc }.encode(), Quality::default(), 0);
+    let mut delivered = false;
+    while let Some(a) = l.poll_action() {
+        delivered |= matches!(a, Action::Event(Event::Delivered { .. }));
+    }
+    assert!(delivered);
+}
+
+#[test]
+fn ladder_receiver_merges_start_copies_and_answers_on_their_bands() {
+    let mut l = Link::new(ladder(), 9);
+    let data = message(100);
+    let start = Frame::Start { id: 0x4242, len: 100, frames: 2, chunk: 64, crc: crc32(&data), inline: None };
+    // Copies on bands 0, 2 and 3 end together; band 1 is not heard.
+    for (b, snr) in [(0u8, 20i8), (3, 14), (2, 18)] {
+        l.on_frame_band(1000, &start.encode(), Quality { snr_db: snr, level_db: -30, clipped: false }, b);
+    }
+    let mut now = 1000;
+    let (f, mask, _) = next_tx(&mut l, &mut now, 3000);
+    assert_eq!(mask, 0b1101);
+    match f {
+        Frame::StartAck { report, quality, .. } => {
+            assert_eq!(report, vec![(0, 20), (2, 18), (3, 14)]);
+            assert_eq!(quality.snr_db, 20, "the normal band's quality goes in the quality field");
+        }
+        f => panic!("{f:?}"),
+    }
+    // Data on band 2: the ack goes back on band 2.
+    l.on_frame_band(now + 2000, &Frame::Data { id: 0x4242, seq: 0, eob: false, data: data[..64].to_vec() }.encode(), Quality::default(), 2);
+    l.on_frame_band(now + 4000, &Frame::Data { id: 0x4242, seq: 1, eob: true, data: data[64..].to_vec() }.encode(), Quality::default(), 2);
+    let mut t = now + 4000;
+    let limit = t + 2000;
+    let (f, mask, _) = next_tx(&mut l, &mut t, limit);
+    assert!(matches!(f, Frame::Done { .. }), "{f:?}");
+    assert_eq!(mask, 1 << 2);
+}
+
+#[test]
+fn ladder_retry_start_goes_on_band_0_only() {
+    let mut l = Link::new(ladder(), 3);
+    l.send(0, &message(10)).unwrap();
+    let mut now = 0;
+    let (_, first, _) = next_tx(&mut l, &mut now, 2000);
+    let (f, second, _) = next_tx(&mut l, &mut now, 20_000);
+    assert!(matches!(f, Frame::Start { .. }));
+    assert_eq!((first, second), (0b1111, 0b0001));
 }

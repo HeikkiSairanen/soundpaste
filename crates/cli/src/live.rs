@@ -32,13 +32,14 @@ fn describe(e: &Event) -> Option<String> {
 pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &["handshake", "quiet", "echo", "once", "no-save", "holdout", "no-holdout"])?;
     audio::check_tools()?;
-    let kind = crate::phy_arg(&a)?;
+    // Like the browser: the band ladder unless --phy names a single waveform.
+    let (kinds, phy_name) = crate::bands_arg(&a, true)?;
     let send: Option<Vec<u8>> = a.str("send").map(|s| s.as_bytes().to_vec());
     let seconds: f64 = a.num("seconds", if send.is_some() { 40.0 } else { 60.0 })?;
     let expect: Option<String> = a.str("expect").map(String::from);
     let cfg = LinkConfig { inline_start: !a.has("handshake"), burst: a.num("burst", 0)?, ..LinkConfig::default() };
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64);
-    let mut station = Station::new(kind, FS as f64, cfg, seed);
+    let mut station = Station::with_bands(&kinds, FS as f64, cfg, seed);
 
     let raw_args = ["-q", "-t", "raw", "-e", "floating-point", "-b", "32", "-c", "1", "-r", "48000", "-"];
     let mut rec = Command::new("rec").args(["--buffer", "1920"]).args(raw_args).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| format!("rec: {e}"))?;
@@ -46,7 +47,7 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let mut mic = rec.stdout.take().unwrap();
     let mut speaker = play.stdin.take().unwrap();
 
-    println!("STATION {} on real audio ({} Hz). {}", kind.name(), FS, match &send { Some(s) => format!("Sending {} bytes.", s.len()), None => "Listening.".into() });
+    println!("STATION {phy_name} on real audio ({} Hz). {}", FS, match &send { Some(s) => format!("Sending {} bytes.", s.len()), None => "Listening.".into() });
     let mut recording: Vec<f32> = Vec::new();
     let mut bytes = vec![0u8; BLOCK * 4];
     let mut input = vec![0.0f32; BLOCK];
@@ -138,7 +139,7 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
     let expected: Option<Vec<u8>> = expect.as_ref().map(|s| s.as_bytes().to_vec()).or_else(|| received.first().cloned());
     if !a.has("no-save") {
         if let Some(text) = &expected {
-            let id = format!("{}-{}-session-{}", bench::utc_now(), a.str_or("label", "mac"), kind.name());
+            let id = format!("{}-{}-session-{}", bench::utc_now(), a.str_or("label", "mac"), phy_name);
             let holdout = if a.has("holdout") { true } else if a.has("no-holdout") { false } else { corpus::auto_holdout(&id) };
             std::fs::create_dir_all(corpus::TX_DIR).map_err(|e| e.to_string())?;
             let base = std::path::Path::new(corpus::TX_DIR).join(&id);
@@ -153,7 +154,7 @@ pub fn cmd_live(raw: &[String]) -> Result<ExitCode, String> {
                 ("distance_m", Json::opt(a.str("distance").and_then(|d| d.parse().ok()))),
                 ("note", Json::str(a.str_or("note", ""))),
                 ("holdout", Json::Bool(holdout)),
-                ("phy", Json::str(kind.name())),
+                ("phy", Json::str(&phy_name)),
                 ("text", Json::str(&String::from_utf8_lossy(text))),
                 ("ok_when_recorded", Json::Bool(received.iter().any(|r| r == text))),
             ]);

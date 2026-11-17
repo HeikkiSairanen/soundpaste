@@ -113,6 +113,19 @@ pub fn phy_arg(a: &Args) -> Result<PhyKind, String> {
     }
 }
 
+/// The bands of a station: `--phy ladder` is the band ladder (DESIGN.md 5.9), any other
+/// value a single waveform. Returns the bands and the name for results.
+pub fn bands_arg(a: &Args, default_ladder: bool) -> Result<(Vec<PhyKind>, String), String> {
+    match a.str("phy") {
+        Some("ladder") => Ok((modem_core::phy::LADDER.to_vec(), "ladder".into())),
+        None if default_ladder => Ok((modem_core::phy::LADDER.to_vec(), "ladder".into())),
+        _ => {
+            let kind = phy_arg(a)?;
+            Ok((vec![kind], kind.name().into()))
+        }
+    }
+}
+
 fn cmd_encode(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &[])?;
     let kind = phy_arg(&a)?;
@@ -241,14 +254,16 @@ fn load_json(path: &Path) -> Result<Json, String> {
 
 fn cmd_bench(raw: &[String]) -> Result<ExitCode, String> {
     let a = Args::parse(raw, &["quick", "no-save", "holdout", "oneway", "handshake"])?;
-    let kind = phy_arg(&a)?;
+    let (kinds, phy_name) = bands_arg(&a, false)?;
+    // The one-way figures and the corpus are measured on the top band.
+    let kind = *kinds.last().unwrap();
     let oneway = a.has("oneway");
     let threads: usize = a.num("threads", std::thread::available_parallelism().map_or(4, |n| n.get()))?;
     let started = std::time::Instant::now();
     let mut profiles = bench::synthetic_profiles();
     profiles.extend(bench::measured_profiles(a.has("holdout")));
     let corpus_score = corpus::run_regression(Some(kind), a.has("holdout"), false);
-    let board = if oneway {
+    let mut board = if oneway {
         let seeds: u32 = a.num("seeds", if a.has("quick") { 4 } else { 12 })?;
         let results = bench::run_profiles(&bench::BenchOptions { kind, seeds, threads }, &profiles);
         bench::Scoreboard::oneway(kind, seeds, results, corpus_score)
@@ -259,9 +274,10 @@ fn cmd_bench(raw: &[String]) -> Result<ExitCode, String> {
         let (link, desc) = session::link_config(&a)?;
         let opts = bench::BenchOptions { kind, seeds, threads };
         let phy = bench::Scoreboard::oneway(kind, 3, bench::run_profiles(&bench::BenchOptions { kind, seeds: 3, threads }, &profiles), corpus_score);
-        let results = session_grid(&opts, &profiles, kind, &link);
+        let results = session_grid(&opts, &profiles, &kinds, &link);
         bench::Scoreboard::session(kind, seeds, &desc, results, &phy, corpus_score)
     };
+    board.phy = phy_name;
     board.print();
     println!("\n(run took {:.1} s)", started.elapsed().as_secs_f64());
     if !a.has("no-save") {
@@ -275,12 +291,12 @@ fn cmd_bench(raw: &[String]) -> Result<ExitCode, String> {
 }
 
 /// Session-mode run: each profile separately, so the job knows its profile.
-fn session_grid(opts: &bench::BenchOptions, profiles: &[bench::Profile], kind: PhyKind, link: &modem_core::link::LinkConfig) -> Vec<bench::ProfileResult> {
+fn session_grid(opts: &bench::BenchOptions, profiles: &[bench::Profile], kinds: &[PhyKind], link: &modem_core::link::LinkConfig) -> Vec<bench::ProfileResult> {
     let mut out = Vec::new();
     for i in 0..profiles.len() {
         let one = &profiles[i..i + 1];
         let p = &profiles[i];
-        let job = move |cfg: &modem_core::sim::OneWay, seed: u64| session::session_point(kind, p, cfg, cfg.snr_db, seed, link);
+        let job = move |cfg: &modem_core::sim::OneWay, seed: u64| session::session_point(kinds, p, cfg, cfg.snr_db, seed, link);
         out.extend(bench::run_grid(opts, one, session::SESSION_GRID, &job));
     }
     out

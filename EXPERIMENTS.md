@@ -442,3 +442,84 @@ sweep: 68 dB vs 37 dB), while 17–20 kHz was as quiet as before. The speaker
 (the PC's speaker and microphone above 17.6 kHz) and distance are unmeasured,
 and so is audibility (the chirp edges, anything a speaker's nonlinearity
 folds down) — that needs ears.
+
+## 8. Band ladder: negotiate in the normal band, send on the highest band that works (2026-11-17)
+
+**Motivation.** The user asked for transfers to start in the normal band and
+then test how high the pair of computers can go, replacing the manual switch
+of entry 7. Two machines differ: a PC microphone may stop at 16 kHz, a
+Bluetooth or voice-processed path at 8 kHz.
+
+**Design** (DESIGN.md 5.9). Four bands: `v1` 1–7.4 kHz and three rungs with
+the `v1-us` waveform (K 6, `Time` layout, no clipping) at 12.0–14.4 (`v1-b12`),
+14.8–17.2 (`v1-b15`) and 17.6–20.0 kHz (`v1-us`). Every station listens on all
+bands at once. The first START goes out on all bands simultaneously (copies
+aligned to end together, each at 1/√4 of its level); the receiver answers
+START_ACK on every band where it heard the START, with a per-band SNR report.
+The sender picks the highest band that both directions decoded with an SNR
+estimate of at least 12 dB, sends the data there, and the receiver answers in
+the band it was addressed in. Fallbacks: a retried START is band 0 only at full
+level; if polls on a high band go unanswered, the sender drops to band 0.
+Inline start is off when negotiating (it would carry the message in band 0).
+
+Simultaneous rather than sequential probes: the same information in the time
+of the longest copy, and the 6 dB level split is a built-in margin (a band that
+decodes at -6 dB has room at full level).
+
+**Threshold.** `sim --profile room`, v1-us: decodes at a demodulator SNR
+estimate of about 10 dB and fails at 7.5 dB (the estimate runs about 20 dB
+above the bench's whole-band SNR and saturates around 26 dB in a room). A
+probe heard at >= 12 dB at -6 dB level means roughly 8 dB of margin at full
+level.
+
+**Cost.** One demodulator takes 0.3 s of CPU per 60 s of audio natively
+(0.5 %); four in parallel stay small in wasm as well.
+
+**Hypothesis.** (1) In the flat simulator the ladder always ends on the top
+band, and the 60-char link takes about 8 s (START and START_ACK on the K 6
+bands are about 1.2 s and 0.9 s, the data frame about 4 s), against 5.95 s for
+manual ultrasonic with inline start and 2.85 s for v1. (2) Success in nominal
+conditions is no worse than v1's. (3) With a receiver path cut off at 16 kHz
+or at 8 kHz, the ladder settles on the 12–14.4 kHz band or the normal band
+respectively, and the message gets through.
+
+**Result, simulation.** Session bench `--phy ladder` (6 runs/point, saved as
+`bench/results/20261117T114147Z-7bb5040-dirty-ladder.json`):
+
+| | v1 (baseline) | ladder |
+|---|---|---|
+| 60-char link | 2.85 s | 8.64 s |
+| success, nominal | 94.2 % | 96.8 % |
+| min SNR, room | -6 dB | -6 dB |
+| measured Mac profiles (incl. today's) | -9 dB (today's: -6 / +3 dB) | -9 dB |
+
+Hypotheses (1) and (2) held: 8.6 s against the predicted 8 s, success no
+worse. In the flat simulator the choice is all or nothing: `room` stays on band
+0 up to a bench SNR of 0 dB and climbs to band 3 from 3 dB up (`reverberant`:
+3 and 6 dB). On band 0 the transfer is faster, 5–6 s. The middle rungs only
+matter on frequency-limited paths: duplex tests with the receiver's
+microphone cut at 14.6 kHz and at 9 kHz end on band 1 and band 0, and A's
+microphone cut at 17.4 kHz ends on band 2 (hypothesis 3 held). The link
+tests cover the threshold, a peer without the ladder, the merge of START
+copies, the band-0-only retry and the fallback after silence on a high band.
+
+**Result, real audio (loop D, Mac CLI <-> browser on the same Mac).** Both
+directions chose band 3 and delivered: CLI -> browser 7.4 s and 9.8 s,
+browser -> CLI 7.3 s. Reports (dB per band 0/1/2/3): the browser heard the
+CLI's START at 16/19/27/30, the CLI heard the browser's at 26/20/28/31. The
+session recording decodes in the corpus.
+
+**Unexpected: a third station.** In every run a START_ACK without a report
+arrived on band 3 alone, 300 ms before the real peer's copies. 300 ms is
+exactly how much shorter a 6-byte START_ACK is than the 11-byte one with a
+report on a K 6 band: it was an older page (entry 7's switch, ultrasonic on)
+on another device within earshot, answering the band 3 probe. The sender chose
+the band on its START_ACK alone, since it came first; here that was harmless
+(the peer's own report would have chosen band 3 too), and a wrong choice
+would end in the fallback to band 0. Frames have no station address; see
+DESIGN.md 5.9.
+
+**Open.** Two different computers (the point of the middle rungs) are
+untested. The 12 dB threshold puts the top band about 12 dB above where `v1-us`
+alone still decodes in the bench; real data may justify lowering it. The
+inline start is gone, so short messages take about 8.6 s instead of 2.85 s.

@@ -41,7 +41,10 @@ pub enum Frame {
     /// Start: message length, number of frames, frame data size and CRC-32 of the whole message.
     /// `inline`: a short message travels with the start frame.
     Start { id: u16, len: u16, frames: u8, chunk: u8, crc: u32, inline: Option<Vec<u8>> },
-    StartAck { id: u16, quality: Quality },
+    /// `report`: band ladder (DESIGN.md 5.9) — the bands on which the receiver heard the
+    /// START and its SNR estimate on each, lowest band first. Empty without a ladder; older
+    /// decoders ignore it.
+    StartAck { id: u16, quality: Quality, report: Vec<(u8, i8)> },
     Data { id: u16, seq: u8, eob: bool, data: Vec<u8> },
     /// Combined ack: bit i is 1 if frame i has been stored.
     Ack { id: u16, quality: Quality, restart: bool, bitmap: Vec<u8> },
@@ -96,9 +99,16 @@ impl Frame {
                 }
                 b
             }
-            Frame::StartAck { id, quality } => {
+            Frame::StartAck { id, quality, report } => {
                 let mut b = head(2, 0, *id);
                 quality.encode(&mut b);
+                if !report.is_empty() {
+                    // A mask of the bands heard, then one SNR byte per band in band order.
+                    let mut sorted = report.clone();
+                    sorted.sort_by_key(|r| r.0);
+                    b.push(sorted.iter().fold(0u8, |m, r| m | (1 << r.0)));
+                    b.extend(sorted.iter().map(|r| r.1 as u8));
+                }
                 b
             }
             Frame::Data { id, seq, eob, data } => {
@@ -140,7 +150,18 @@ impl Frame {
                 crc: u32::from_be_bytes([body[4], body[5], body[6], body[7]]),
                 inline: (flags & FLAG_INLINE != 0).then(|| body[8..].to_vec()),
             },
-            2 if body.len() >= 3 => Frame::StartAck { id, quality: Quality::decode(body) },
+            2 if body.len() >= 3 => {
+                let mut report = Vec::new();
+                if let Some(&mask) = body.get(3) {
+                    let mut snrs = body[4..].iter();
+                    for band in 0..8u8 {
+                        if mask & (1 << band) != 0 {
+                            report.push((band, *snrs.next()? as i8));
+                        }
+                    }
+                }
+                Frame::StartAck { id, quality: Quality::decode(body), report }
+            }
             3 if !body.is_empty() => Frame::Data { id, seq: body[0], eob: flags & FLAG_EOB != 0, data: body[1..].to_vec() },
             4 if body.len() >= 3 => Frame::Ack { id, quality: Quality::decode(body), restart: flags & FLAG_RESTART != 0, bitmap: body[3..].to_vec() },
             5 if body.len() >= 4 => Frame::Done { id, crc: u32::from_be_bytes([body[0], body[1], body[2], body[3]]) },
@@ -162,7 +183,8 @@ mod tests {
             Frame::Start { id: 0xBEEF, len: 300, frames: 5, chunk: 64, crc: 0xDEADBEEF, inline: None },
             Frame::Start { id: 1, len: 3, frames: 1, chunk: 64, crc: 7, inline: Some(b"abc".to_vec()) },
             Frame::Start { id: 2, len: 0, frames: 0, chunk: 64, crc: 0, inline: Some(vec![]) },
-            Frame::StartAck { id: 9, quality: q },
+            Frame::StartAck { id: 9, quality: q, report: vec![] },
+            Frame::StartAck { id: 9, quality: q, report: vec![(0, 30), (2, -4), (3, 12)] },
             Frame::Data { id: 9, seq: 4, eob: true, data: vec![1, 2, 3] },
             Frame::Data { id: 9, seq: 0, eob: false, data: vec![] },
             Frame::Ack { id: 9, quality: q, restart: false, bitmap: vec![0b1011_0000] },
@@ -188,5 +210,6 @@ mod tests {
         assert_eq!(Frame::decode(&[]), None);
         assert_eq!(Frame::decode(&[0x10, 0, 0, 1]), None); // START too short
         assert_eq!(Frame::decode(&[0xF0, 0, 0]), None); // unknown type
+        assert_eq!(Frame::decode(&[0x20, 0, 9, 25, 0xE0, 0, 0b101, 30]), None); // report cut short
     }
 }

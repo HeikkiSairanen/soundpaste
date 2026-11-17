@@ -42,7 +42,8 @@ pub struct Side {
 
 #[derive(Clone, Debug)]
 pub struct DuplexConfig {
-    pub kind: PhyKind,
+    /// The bands of both stations: one waveform, or a band ladder (lowest first).
+    pub kinds: Vec<PhyKind>,
     pub sides: [Side; 2],
     /// Clock error of station B relative to station A.
     pub clock_ppm: f64,
@@ -72,7 +73,7 @@ pub struct Duplex {
 impl Duplex {
     pub fn new(cfg: &DuplexConfig) -> Self {
         let mut rng = Rng::new(cfg.seed);
-        let station = |i: usize, seed: u64| Station::new(cfg.kind, cfg.sides[i].fs, cfg.sides[i].link.clone(), seed);
+        let station = |i: usize, seed: u64| Station::with_bands(&cfg.kinds, cfg.sides[i].fs, cfg.sides[i].link.clone(), seed);
         let stations = [station(0, rng.next_u64()), station(1, rng.next_u64())];
         let mic = |i: usize, rng: &mut Rng| {
             let me = &cfg.sides[i];
@@ -228,7 +229,7 @@ mod tests {
 
     fn room(seed: u64) -> DuplexConfig {
         let side = |fs: f64, s: u64| Side { ir: synth_ir(fs, 0.35, 8.0, seed + s), self_ir: synth_ir(fs, 0.35, 14.0, seed + s + 50), ..Side::typical(fs) };
-        DuplexConfig { kind: PhyKind::DEFAULT, sides: [side(48000.0, 1), side(48000.0, 2)], clock_ppm: 0.0, seed }
+        DuplexConfig { kinds: vec![PhyKind::DEFAULT], sides: [side(48000.0, 1), side(48000.0, 2)], clock_ppm: 0.0, seed }
     }
 
     #[test]
@@ -286,7 +287,7 @@ mod tests {
         // Longer frames than v1: the receiver's timeouts must still hold, and the
         // 44.1 kHz side's band edge sits right under its Nyquist frequency.
         let mut cfg = room(7);
-        cfg.kind = PhyKind::Mfsk(&crate::phy::mfsk::ULTRASONIC);
+        cfg.kinds = vec![PhyKind::Mfsk(&crate::phy::mfsk::ULTRASONIC)];
         cfg.sides[1].fs = 44100.0;
         cfg.sides[1].ir = synth_ir(44100.0, 0.35, 8.0, 17);
         cfg.sides[1].self_ir = synth_ir(44100.0, 0.35, 14.0, 18);
@@ -310,6 +311,107 @@ mod tests {
         assert!(d.events[1].iter().any(|e| matches!(e, Event::Failed { reason: FailReason::NoReceiver, .. })), "{}", d.log());
         assert!(d.received(0).is_empty());
         assert_eq!(d.stations[0].stats().preambles, 0);
+    }
+
+    // ---------------------------------------------------------------- band ladder
+
+    fn ladder_room(seed: u64) -> DuplexConfig {
+        DuplexConfig { kinds: crate::phy::LADDER.to_vec(), ..room(seed) }
+    }
+
+    /// A microphone path that stops at `fc`: the room response through a sharp low-pass
+    /// filter (Blackman-windowed sinc, 801 taps).
+    fn cut_at(ir: &[f32], fc: f64, fs: f64) -> Vec<f32> {
+        let n = 801;
+        let m = (n - 1) as f64;
+        let h: Vec<f64> = (0..n)
+            .map(|i| {
+                let x = i as f64 - m / 2.0;
+                let sinc = if x == 0.0 { 2.0 * fc / fs } else { (std::f64::consts::TAU * fc / fs * x).sin() / (std::f64::consts::PI * x) };
+                let w = 0.42 - 0.5 * (std::f64::consts::TAU * i as f64 / m).cos() + 0.08 * (2.0 * std::f64::consts::TAU * i as f64 / m).cos();
+                sinc * w
+            })
+            .collect();
+        let mut out = vec![0.0f32; ir.len() + n - 1];
+        for (i, &x) in ir.iter().enumerate() {
+            for (k, &hk) in h.iter().enumerate() {
+                out[i + k] += x * hk as f32;
+            }
+        }
+        out
+    }
+
+    /// The band the sender ended on (its last band event).
+    fn sender_band(d: &Duplex, i: usize) -> Option<u8> {
+        d.events[i].iter().rev().find_map(|e| match e {
+            Event::Band { band, sending: true, .. } => Some(*band),
+            _ => None,
+        })
+    }
+
+    fn ladder_transfer(cfg: &DuplexConfig) -> (Duplex, u8) {
+        let mut d = Duplex::new(cfg);
+        d.run(0.4);
+        d.stations[0].send(LINK).unwrap();
+        assert!(d.run_until(40.0, |d| d.settled(0)), "{}", d.log());
+        assert_eq!(d.received(1), vec![LINK.to_vec()], "{}", d.log());
+        assert!(d.delivered_ms(0).is_some(), "{}", d.log());
+        let band = sender_band(&d, 0).expect("no band chosen");
+        (d, band)
+    }
+
+    #[test]
+    fn ladder_climbs_to_the_top_band_in_an_open_room() {
+        let (d, band) = ladder_transfer(&ladder_room(11));
+        assert_eq!(band, 3, "{}", d.log());
+        // The receiver heard the data on the same band.
+        assert!(d.events[1].iter().any(|e| matches!(e, Event::Band { band: 3, sending: false, lo_hz: 17600, hi_hz: 20000 })), "{}", d.log());
+    }
+
+    #[test]
+    fn ladder_stops_under_the_receivers_cutoff() {
+        // B's microphone stops at 14.6 kHz (between rungs 1 and 2), then at 9 kHz (above the
+        // normal band only).
+        for (fc, expected) in [(14_600.0, 1), (9_000.0, 0)] {
+            let mut cfg = ladder_room(12);
+            cfg.sides[1].ir = cut_at(&cfg.sides[1].ir, fc, 48000.0);
+            let (d, band) = ladder_transfer(&cfg);
+            assert_eq!(band, expected, "cutoff {fc} Hz\n{}", d.log());
+        }
+    }
+
+    #[test]
+    fn ladder_respects_a_weak_return_direction() {
+        // A -> B carries everything, but A's own microphone stops at 17.4 kHz: the top band
+        // would not carry B's acks.
+        let mut cfg = ladder_room(13);
+        cfg.sides[0].ir = cut_at(&cfg.sides[0].ir, 17_400.0, 48000.0);
+        let (d, band) = ladder_transfer(&cfg);
+        assert_eq!(band, 2, "{}", d.log());
+    }
+
+    #[test]
+    fn ladder_station_receives_from_a_single_band_station() {
+        // An older station (v1 only, inline start) sends to a ladder station.
+        let mut d = Duplex::new(&ladder_room(14));
+        d.stations[0] = Station::new(PhyKind::DEFAULT, 48000.0, LinkConfig::default(), 5);
+        d.run(0.3);
+        d.stations[0].send(LINK).unwrap();
+        assert!(d.run_until(15.0, |d| d.settled(0)), "{}", d.log());
+        assert_eq!(d.received(1), vec![LINK.to_vec()], "{}", d.log());
+        assert!(d.delivered_ms(0).is_some(), "{}", d.log());
+    }
+
+    #[test]
+    fn ladder_both_press_send_and_both_messages_arrive() {
+        let mut d = Duplex::new(&ladder_room(15));
+        d.run(0.4);
+        d.stations[0].send(b"from A to B").unwrap();
+        d.run(0.35);
+        d.stations[1].send(b"from B to A").unwrap();
+        assert!(d.run_until(60.0, |d| d.settled(0) && d.settled(1)), "{}", d.log());
+        assert_eq!(d.received(1), vec![b"from A to B".to_vec()], "{}", d.log());
+        assert_eq!(d.received(0), vec![b"from B to A".to_vec()], "{}", d.log());
     }
 
     #[test]

@@ -106,6 +106,11 @@ pub const BASE: MfskParams = MfskParams {
 /// microphone's roll-off ruins only a sixth of the bytes.
 pub const ULTRASONIC: MfskParams = MfskParams { name: "v1-us", mode_id: 1, f0: 17600.0, k: 6, layout: ByteLayout::Time, rms: 0.26, ..BASE };
 
+/// Middle rungs of the band ladder (EXPERIMENTS.md entry 8): the ultrasonic waveform
+/// moved down, for paths that stop short of 20 kHz (a PC microphone at 16 kHz, say).
+pub const BAND12: MfskParams = MfskParams { name: "v1-b12", mode_id: 2, f0: 12000.0, ..ULTRASONIC };
+pub const BAND15: MfskParams = MfskParams { name: "v1-b15", mode_id: 3, f0: 14800.0, ..ULTRASONIC };
+
 impl MfskParams {
     fn bps(&self) -> usize {
         self.m.trailing_zeros() as usize

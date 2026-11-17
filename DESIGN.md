@@ -410,6 +410,56 @@ Measured in simulation (15 profiles, 60-character link, median in nominal condit
 The missing percent of success come from the `hall` profile, which does not
 work with either method. Inline start is the default (`LinkConfig::inline_start`).
 
+With the band ladder (5.9) there is no inline start: the message would travel
+on the normal band before the negotiation.
+
+### 5.9 Band ladder (2026-11-17)
+
+The page's default since EXPERIMENTS.md entry 8. Four bands, lowest first:
+
+| band | waveform | frequencies |
+|---|---|---|
+| 0 | `v1` (K 16) | 1.0–7.4 kHz |
+| 1 | `v1-b12` (K 6, `Time` layout, no clipping) | 12.0–14.4 kHz |
+| 2 | `v1-b15` | 14.8–17.2 kHz |
+| 3 | `v1-us` | 17.6–20.0 kHz |
+
+A band is used only if it ends below 0.45·fs (`phy::ladder_for`). Every
+station runs one receiver per band at once, so the bands need no agreement in
+advance and a ladder station also talks to a single-band `v1` station.
+
+```text
+A -> B   START on bands 0+1+2+3 at once, copies aligned to end together,
+         each at 1/sqrt(4) of its level
+B -> A   START_ACK on every band where B heard the START,
+         with B's SNR estimate per band (the report)
+A        band = highest band that both B's report and A's own reception of the
+         START_ACK put at >= 12 dB (LinkConfig::probe_min_snr), else band 0
+A -> B   DATA, POLL, CANCEL on that band; B answers on the band it was asked on
+```
+
+- **The report** is appended to START_ACK: a byte with one bit per band heard,
+  then one SNR byte per set bit. Older decoders ignore it; from a peer without
+  a report, A assumes that the peer heard it on the band it answered on.
+- **Copies** of one START merge into one pending START_ACK (its band mask and
+  report grow); copies of any other reply merge into one transmission on all
+  their bands (`schedule_reply`).
+- **Margin.** The probes travel at -6 dB, and the threshold is about 2 dB over
+  the decoding limit of a K 6 band (decodes at an estimate of 10 dB, fails at
+  7.5 dB in a room), so the data has about 8 dB of margin at full level.
+- **Fallbacks.** A retried START goes on band 0 alone, at full level. If the
+  polls on a high band go unanswered, or its retransmission rounds run out, A
+  drops to band 0 (fresh polls and rounds) and says so (`Event::Band`).
+- **Cost.** The START exchange takes as long as its longest copy (about 1.2 s
+  and 0.9 s on a K 6 band), and the data travels at 38 % of v1's rate: the
+  60-character link takes about 8.6 s instead of 2.85 s. When the probes come
+  out too weak the transfer stays on band 0 and takes 5–6 s.
+- **Several listeners.** Frames carry no station address, so every station
+  that hears the START answers, and their reports merge. A band chosen on the
+  strength of a third station that the real peer cannot hear ends in the
+  fallback to band 0. Seen in practice: an older page with the ultrasonic
+  switch on answered the band 3 probes (EXPERIMENTS.md entry 8).
+
 ## 6. Time estimates
 
 **Measured in simulation** (`soundpaste bench`, `soundpaste session`): 60-character
@@ -460,11 +510,8 @@ These are not implemented now, but the structure does not rule them out:
   payload modulation. START_ACK tells the receiver's signal quality, and A can
   choose a faster mode for the data frames. The header and the acks stay in
   the base mode.
-- **Nearly inaudible mode (18–20 kHz):** the measured response there is about
-  12 dB weaker but usable. The mode needs its own preamble (a chirp on a
-  different band), i.e. a second detector is added alongside in the receiver.
-  `PhyKind` and the tone-grid parameters (lowest frequency, tone spacing,
-  number of subchannels) are made for this.
+- **Nearly inaudible mode (18–20 kHz):** implemented as the top of the band
+  ladder (5.9), with parallel detectors as planned here.
 - **Robust mode for heavy noise:** the first version has no slower fallback
   mode (decision 2026-11-11: we try without and add it if practice requires).
   Adding it is possible thanks to three structural choices:

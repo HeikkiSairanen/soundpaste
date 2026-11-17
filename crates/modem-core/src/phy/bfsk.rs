@@ -18,8 +18,8 @@ use crate::crc::crc16;
 use crate::dsp::sliding::SlidingBin;
 
 const BAUD: f64 = 100.0;
-const F0: f64 = 2000.0;
-const F1: f64 = 3000.0;
+pub const F0: f64 = 2000.0;
+pub const F1: f64 = 3000.0;
 const PREAMBLE_BITS: usize = 32;
 const SYNC: u16 = 0x2DD4;
 const AMPLITUDE: f32 = 0.5;

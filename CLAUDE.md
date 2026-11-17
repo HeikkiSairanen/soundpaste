@@ -75,9 +75,11 @@ Do not tune for a single room or device pair, and do not adjust tests to make th
 - Default waveform `v1` (16 × 4-FSK, tone hopping, chirp preamble,
   Reed–Solomon), link layer (`link/`), station (`station.rs`) and two-way
   simulation (`sim/duplex.rs`).
-- Ultrasonic mode `v1-us` (17.6–20 kHz, K 6, `Time` layout, no clipping), a switch on the
-  page (EXPERIMENTS.md entry 7). About 2.1 × slower than `v1`. Works on the Mac's own
-  speaker -> microphone (5/5 down to gain 0.01); two computers not yet tried.
+- Band ladder (DESIGN.md 5.9, EXPERIMENTS.md entries 7–8), the page's default and
+  `live`'s: the START probes 1–7.4, 12–14.4, 14.8–17.2 and 17.6–20 kHz at once, the data
+  goes on the highest band both directions hear at >= 12 dB, fallback to the normal
+  band. 60-char link about 8.6 s (v1 alone 2.85 s). Loop D works on band 3; two
+  different computers not yet tried. `--phy ladder` in bench/session/live.
 - Baseline `bench/baseline.json`: session mode, 60-character link 2.85 s, success
   94.2 % in nominal conditions (the missing part is the `hall` profile, which does not
   work), lowest SNR in a room -6 dB.

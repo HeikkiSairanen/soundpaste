@@ -30,18 +30,12 @@
     pendingRecording: new Map(),
     peakHold: -80,
     clipSince: 0,
-    receiving: false,
-    // Ultrasonic mode: what the switch asks for, and what the running station is in.
-    wantUltrasonic: initialUltrasonic(),
-    ultrasonic: false,
+    // Band ladder: the highest frequency of each band the station listens on, and the
+    // band the latest send and the latest reception travelled on (as text).
+    bandTops: [],
+    txBand: '',
+    rxBand: '',
   };
-
-  // The switch remembers its position in this browser; ?mode=ultrasonic|normal overrides.
-  function initialUltrasonic() {
-    const mode = params.get('mode');
-    if (mode === 'ultrasonic' || mode === 'normal') return mode === 'ultrasonic';
-    try { return localStorage.getItem('soundpaste.mode') === 'ultrasonic'; } catch (err) { return false; }
-  }
 
   // ------------------------------------------------------------------ log
 
@@ -139,36 +133,22 @@
     return response.arrayBuffer();
   }
 
+  // Troubleshooting flags: ?handshake=1 (single band only) and ?bands=normal (no ladder).
   function stationFlags() {
-    return (params.get('handshake') === '1' ? 1 : 0) | (app.wantUltrasonic ? 2 : 0);
-  }
-
-  function newSeed() {
-    const seed = crypto.getRandomValues(new Uint32Array(2));
-    return [seed[0], seed[1]];
+    return (params.get('handshake') === '1' ? 1 : 0) | (params.get('bands') === 'normal' ? 2 : 0);
   }
 
   function loadWasm(buffer) {
-    app.node.port.postMessage({ type: 'load', wasm: buffer, seed: newSeed(), flags: stationFlags() }, [buffer]);
+    const seed = crypto.getRandomValues(new Uint32Array(2));
+    app.node.port.postMessage({ type: 'load', wasm: buffer, seed: [seed[0], seed[1]], flags: stationFlags() }, [buffer]);
   }
 
-  // ------------------------------------------------------------------ mode switch
-
-  function setUltrasonic(on) {
-    app.wantUltrasonic = !!on;
-    $('ultrasonic').checked = app.wantUltrasonic;
-    try { localStorage.setItem('soundpaste.mode', on ? 'ultrasonic' : 'normal'); } catch (err) { /* private window */ }
-    if (!app.ready) return; // applied at startup
-    if (app.wantUltrasonic === app.ultrasonic) return;
-    app.ready = false;
-    updateModeControl();
-    log(`switching to ${on ? 'ultrasonic' : 'normal'} mode`);
-    app.node.port.postMessage({ type: 'mode', seed: newSeed(), flags: stationFlags() });
+  function kHz(hz) {
+    return String(Math.round(hz / 100) / 10);
   }
 
-  function updateModeControl() {
-    // A switch mid-transfer would drop it, so the switch waits while busy.
-    $('ultrasonic').disabled = app.sending || app.receiving || (app.node !== null && !app.ready);
+  function bandText(lo, hi) {
+    return `${kHz(lo)}–${kHz(hi)} kHz`;
   }
 
   function fatal(message) {
@@ -186,26 +166,14 @@
         app.ready = true;
         app.maxMessage = m.maxMessage;
         app.sending = false;
-        app.receiving = false;
-        app.ultrasonic = !!m.ultrasonic;
-        if (app.wantUltrasonic && !app.ultrasonic) {
-          // The band reaches 20 kHz, so the audio must run at 44.1 kHz or more.
-          app.wantUltrasonic = false;
-          $('ultrasonic').checked = false;
-          $('mode-hint').textContent = `Ultrasonic needs audio at 44.1 kHz or more; this device runs at ${m.sampleRate} Hz. Using the normal mode.`;
-          log(`ultrasonic mode is not possible at ${m.sampleRate} Hz`);
-        }
-        $('rx-status').textContent = 'Listening…';
-        $('rx-status').classList.remove('ok');
-        $('rx-progress').hidden = true;
+        app.bandTops = m.bandTops || [];
         $('start-section').hidden = true;
         for (const id of ['meter-section', 'send-section', 'receive-section']) $(id).hidden = false;
         $('download').disabled = false;
-        log(`modem ready: ${m.sampleRate} Hz, ${app.ultrasonic ? 'ultrasonic' : 'normal'} mode, maximum message length ${m.maxMessage} bytes`);
+        log(`modem ready: ${m.sampleRate} Hz, listening on ${app.bandTops.length} ${app.bandTops.length === 1 ? 'band' : 'bands'} up to ${kHz(Math.max(0, ...app.bandTops))} kHz, maximum message length ${m.maxMessage} bytes`);
         updateInput();
         setSending(false);
-        updateModeControl();
-        emit({ kind: 'ready', sampleRate: m.sampleRate, ultrasonic: app.ultrasonic });
+        emit({ kind: 'ready', sampleRate: m.sampleRate, bandTops: app.bandTops });
         break;
       case 'events':
         app.stationNow = m.now;
@@ -245,7 +213,7 @@
     'The receiver acknowledged different content than was sent.',
   ];
   const FAIL_ADVICE = [
-    'Check that the other computer has this page open with Start pressed, that both use the same mode (ultrasonic on or off), that the computers are close together and that sound is on. Try turning the volume up.',
+    'Check that the other computer has this page open with Start pressed, that the computers are close together and that sound is on. Try turning the volume up.',
     'Try again. If it keeps happening, move the computers closer together.',
     'Try again at a quieter moment or move the computers closer together.',
     'Try again.',
@@ -265,7 +233,7 @@
         const text = [
           () => 'Checking that the channel is free…',
           () => `Looking for a receiver… (attempt ${a}/${x})`,
-          () => `Sending, frame ${a}/${x}${c > 1 ? ' (retransmission)' : ''}`,
+          () => `Sending, frame ${a}/${x}${app.txBand ? ' on ' + app.txBand : ''}${c > 1 ? ' (retransmission)' : ''}`,
           () => 'Waiting for acknowledgement…',
           () => `No acknowledgement heard, asking again (${a}/${x})…`,
           () => `Retrying: the receiver is missing ${a} ${a === 1 ? 'frame' : 'frames'}.`,
@@ -278,7 +246,7 @@
       case 2: { // delivered
         const seconds = dv.getUint32(3, true) / 1000;
         setSending(false);
-        setTx(`Delivered (${seconds.toFixed(1)} s)`, true);
+        setTx(`Delivered (${seconds.toFixed(1)} s${app.txBand ? ', ' + app.txBand : ''})`, true);
         emit({ kind: 'delivered', seconds });
         break;
       }
@@ -288,9 +256,6 @@
         setTx(`Failed: ${FAIL_TEXT[reason] || 'unknown reason.'}`, false);
         const advice = $('tx-advice');
         advice.textContent = HINT_ADVICE[hint] || FAIL_ADVICE[reason] || '';
-        if (app.ultrasonic && advice.textContent) {
-          advice.textContent += ' If ultrasonic keeps failing, one of the speakers or microphones may not reach 20 kHz: turn ultrasonic off on both computers.';
-        }
         advice.hidden = !advice.textContent;
         emit({ kind: 'failed', reason, hint, quality: hasQuality ? { snrDb: dv.getInt8(4), levelDb: dv.getInt8(5), clipped: !!b[6] } : null });
         break;
@@ -302,7 +267,7 @@
         break;
       case 5: { // receiving started
         const len = dv.getUint32(3, true);
-        setReceiving(true);
+        app.rxBand = '';
         $('rx-status').textContent = `Receiving a message (${len} bytes)…`;
         $('rx-status').classList.remove('ok');
         const progress = $('rx-progress');
@@ -313,7 +278,7 @@
       }
       case 6: { // progress
         const [have, of] = [dv.getUint32(1, true), dv.getUint32(5, true)];
-        $('rx-status').textContent = `Receiving: ${have}/${of} frames`;
+        $('rx-status').textContent = `Receiving: ${have}/${of} frames${app.rxBand ? ' on ' + app.rxBand : ''}`;
         const progress = $('rx-progress');
         progress.hidden = false;
         progress.max = of;
@@ -331,15 +296,13 @@
         $('rx-progress').hidden = true;
         $('copy').hidden = false;
         $('copy-status').textContent = '';
-        setReceiving(false);
         const status = $('rx-status');
-        status.textContent = len === 0 ? 'Received an empty message.' : `Received ${len} bytes.`;
+        status.textContent = (len === 0 ? 'Received an empty message' : `Received ${len} bytes`) + (app.rxBand ? ` on ${app.rxBand}.` : '.');
         status.classList.add('ok');
         emit({ kind: 'received', text: app.received, bytes: Array.from(bytes) });
         break;
       }
       case 8:
-        setReceiving(false);
         $('rx-progress').hidden = true;
         $('rx-status').classList.remove('ok');
         $('rx-status').textContent = b[1] === 1 ? 'The sender cancelled.' : 'Nothing more was heard from the sender: the incomplete message was discarded.';
@@ -348,6 +311,15 @@
       case 9:
         log(decoder.decode(b.subarray(1)));
         break;
+      case 10: { // band ladder: the band the data travels on
+        const [band, sending] = [b[1], b[2] === 1];
+        const text = bandText(dv.getUint32(3, true), dv.getUint32(7, true));
+        if (sending) app.txBand = text;
+        else app.rxBand = text;
+        log(`${sending ? 'sending' : 'receiving'} on band ${band}: ${text}`);
+        emit({ kind: 'band', band, sending, text });
+        break;
+      }
     }
   }
 
@@ -366,12 +338,6 @@
     $('cancel').hidden = !on;
     $('text').readOnly = on;
     updateInput();
-    updateModeControl();
-  }
-
-  function setReceiving(on) {
-    app.receiving = on;
-    updateModeControl();
   }
 
   function updateInput() {
@@ -398,6 +364,7 @@
     const bytes = encoder.encode(text);
     if (bytes.length > app.maxMessage) return false;
     $('tx-advice').hidden = true;
+    app.txBand = '';
     setSending(true);
     setTx('Starting…', false);
     log(`sending ${bytes.length} bytes`);
@@ -480,8 +447,6 @@
 
   // ------------------------------------------------------------------ events
 
-  $('ultrasonic').checked = app.wantUltrasonic;
-  $('ultrasonic').addEventListener('change', (e) => setUltrasonic(e.target.checked));
   $('start').addEventListener('click', start);
   $('text').addEventListener('input', updateInput);
   $('send').addEventListener('click', () => send($('text').value));
@@ -518,8 +483,7 @@
     context: () => app.ctx,
     wavBytes,
     reloadWasm: (buffer) => { app.ready = false; loadWasm(buffer); },
-    setUltrasonic,
-    state: () => ({ ready: app.ready, sending: app.sending, sampleRate: app.sampleRate, stats: app.stats, stationNow: app.stationNow, ultrasonic: app.ultrasonic }),
+    state: () => ({ ready: app.ready, sending: app.sending, sampleRate: app.sampleRate, stats: app.stats, stationNow: app.stationNow, bandTops: app.bandTops, txBand: app.txBand, rxBand: app.rxBand }),
     log,
   };
 })();

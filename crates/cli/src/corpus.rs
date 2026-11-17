@@ -90,9 +90,9 @@ pub fn decode_expect(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeResu
 /// is fed to a fresh station that acts as a passive receiver. Its own replies go
 /// nowhere, but it assembles the message from the frames it hears with the same
 /// code as a real receiver.
-pub fn decode_session(kind: PhyKind, w: &wav::Wav, expected: &[u8]) -> DecodeResult {
+pub fn decode_session(kinds: &[PhyKind], w: &wav::Wav, expected: &[u8]) -> DecodeResult {
     use modem_core::link::{Event, LinkConfig};
-    let mut station = modem_core::station::Station::new(kind, w.sample_rate as f64, LinkConfig::default(), 1);
+    let mut station = modem_core::station::Station::with_bands(kinds, w.sample_rate as f64, LinkConfig::default(), 1);
     let mut out = vec![0.0f32; 480];
     let mut ok = false;
     for chunk in w.samples.chunks(480) {
@@ -114,7 +114,10 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
     for (path, meta) in entries(TX_DIR) {
         let id = meta.str_at("id").unwrap_or("?").to_string();
         let phy_name = meta.str_at("phy").unwrap_or("");
-        let Some(kind) = PhyKind::from_name(phy_name) else {
+        // A session recorded on the band ladder is replayed on the ladder; it counts under its top band.
+        let ladder = phy_name == "ladder";
+        let found = if ladder { modem_core::phy::LADDER.last().copied() } else { PhyKind::from_name(phy_name) };
+        let Some(kind) = found else {
             score.stale += 1;
             if verbose {
                 println!("  {id:<50} stale (waveform '{phy_name}' no longer exists)");
@@ -136,7 +139,8 @@ pub fn run_regression(only: Option<PhyKind>, include_holdout: bool, verbose: boo
                 continue;
             }
         };
-        let r = if meta.str_at("kind") == Some("session") { decode_session(kind, &w, text.as_bytes()) } else { decode_expect(kind, &w, text.as_bytes()) };
+        let bands = if ladder { modem_core::phy::LADDER.to_vec() } else { vec![kind] };
+        let r = if meta.str_at("kind") == Some("session") { decode_session(&bands, &w, text.as_bytes()) } else { decode_expect(kind, &w, text.as_bytes()) };
         if holdout {
             score.holdout_n += 1;
             score.holdout_ok += r.ok as u32;

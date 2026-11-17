@@ -52,11 +52,7 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
       }
       const x = this.x;
       if (!x) return;
-      if (m.type === 'mode') {
-        // Mode switch: a new station on the same module. An unfinished send or
-        // receive is dropped; the page only allows this while idle.
-        this.newStation(m.seed, m.flags);
-      } else if (m.type === 'send') {
+      if (m.type === 'send') {
         const bytes = new Uint8Array(m.bytes);
         const p = x.sp_alloc(bytes.length);
         new Uint8Array(x.memory.buffer, p, bytes.length).set(bytes);
@@ -85,7 +81,9 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
   newStation(seed, flags) {
     const x = this.x;
     x.sp_new(sampleRate, seed[0] >>> 0, seed[1] >>> 0, flags | 0);
-    this.port.postMessage({ type: 'ready', sampleRate, maxMessage: x.sp_max_message(), ultrasonic: x.sp_ultrasonic() === 1 });
+    const bandTops = [];
+    for (let i = 0; i < x.sp_band_count(); i++) bandTops.push(x.sp_band_top_hz(i));
+    this.port.postMessage({ type: 'ready', sampleRate, maxMessage: x.sp_max_message(), bandTops });
   }
 
   process(inputs, outputs) {

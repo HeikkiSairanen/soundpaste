@@ -5,6 +5,12 @@ you by sound. One computer plays through its speaker, the other listens with
 its microphone and acknowledges by sound. There is no server: everything
 happens in the browser.
 
+A transfer starts with a short audible handshake in the normal band (1–7.4 kHz)
+that also probes three higher bands, up to 17.6–20 kHz. The message then goes on
+the highest band both computers hear well, often too high for adults to notice
+([DESIGN.md 5.9](DESIGN.md)). `?bands=normal` on the page keeps everything in the
+normal band, for troubleshooting.
+
 - Page: https://heikkisairanen.github.io/soundpaste/ (publishing: see [Publishing](#publishing))
 - Design and rationale: [DESIGN.md](DESIGN.md)
 - Experiment log with measurements: [EXPERIMENTS.md](EXPERIMENTS.md)

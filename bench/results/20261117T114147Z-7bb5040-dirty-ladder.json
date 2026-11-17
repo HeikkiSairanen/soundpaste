@@ -1,0 +1,333 @@
+{
+  "schema": 1,
+  "commit": "7bb5040+dirty",
+  "time_utc": "20261117T114147Z",
+  "phy": "ladder",
+  "mode": "session: burst, inline start",
+  "seeds": 6,
+  "summary": {
+    "transfer_time_s": 8.645,
+    "transfer_note": "from pressing Send to the Delivered notice, median in nominal conditions",
+    "success_rate": 0.968137,
+    "detect_rate": 1,
+    "false_frames": 0,
+    "min_snr_db_room": -6,
+    "ber_pre_fec": 0.003205,
+    "corrected_per_frame": 0.752941,
+    "net_bytes_per_s": 6.940428,
+    "frames_per_session": 1.330882,
+    "corpus_n": 5,
+    "corpus_ok": 5,
+    "corpus_rate": 1,
+    "holdout_n": 0,
+    "holdout_ok": 0
+  },
+  "profiles": [
+    {
+      "name": "clean",
+      "desc": "no reverb, white noise",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 113, "median_ms": 8764},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 8766},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 100, "median_ms": 5718},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 5852},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8661},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8583},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8729},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8729},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8769},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8682}
+      ]
+    },
+    {
+      "name": "room",
+      "desc": "RT60 0.35 s, DRR 8 dB, white noise",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 61, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 47, "median_ms": 9152},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 60, "median_ms": 8295},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 50, "median_ms": 5677},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 6, "median_ms": 8603},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 8661},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8848},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8724},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8670},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8725}
+      ]
+    },
+    {
+      "name": "reverberant",
+      "desc": "RT60 0.8 s, DRR 0 dB",
+      "holdout": false,
+      "min_snr_db": 0,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 0, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 7, "median_ms": null},
+        {"snr_db": -3, "n": 6, "ok": 4, "detected": 6, "ber": null, "corrected": 107, "median_ms": 13655},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 83, "median_ms": 8123},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 136, "median_ms": 5936},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 113, "median_ms": 8804},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 38, "median_ms": 8763},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 35, "median_ms": 8628},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 35, "median_ms": 8803},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 55, "median_ms": 8783}
+      ]
+    },
+    {
+      "name": "hall",
+      "desc": "RT60 1.2 s, DRR -5 dB: reverb clearly louder than the direct sound",
+      "holdout": false,
+      "min_snr_db": null,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 0, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 0, "median_ms": null},
+        {"snr_db": -3, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 0, "median_ms": null},
+        {"snr_db": 0, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 0, "median_ms": null},
+        {"snr_db": 3, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 59, "median_ms": null},
+        {"snr_db": 6, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 106, "median_ms": null},
+        {"snr_db": 12, "n": 6, "ok": 3, "detected": 6, "ber": null, "corrected": 117, "median_ms": 14777},
+        {"snr_db": 18, "n": 6, "ok": 3, "detected": 6, "ber": null, "corrected": 200, "median_ms": 8384},
+        {"snr_db": 24, "n": 6, "ok": 1, "detected": 6, "ber": null, "corrected": 97, "median_ms": 42523},
+        {"snr_db": 30, "n": 6, "ok": 4, "detected": 6, "ber": null, "corrected": 154, "median_ms": 42701}
+      ]
+    },
+    {
+      "name": "room-noise",
+      "desc": "room + pink (low-frequency weighted) noise",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 207, "median_ms": 8070},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 10, "median_ms": 8669},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 35, "median_ms": 8469},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 14, "median_ms": 8685},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8701},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8601},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8766},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8708},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8701},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8746}
+      ]
+    },
+    {
+      "name": "clock-44-48",
+      "desc": "transmitter 44.1 kHz, receiver 48 kHz +120 ppm, room",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 9, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 47, "median_ms": 8572},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 8, "median_ms": 8563},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 79, "median_ms": 5594},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 11, "median_ms": 8507},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8745},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8689},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8503},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 8830},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8627}
+      ]
+    },
+    {
+      "name": "clock-48-44",
+      "desc": "transmitter 48 kHz, receiver 44.1 kHz -120 ppm, room",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 11, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 70, "median_ms": 8101},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 10, "median_ms": 9198},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 82, "median_ms": 6013},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 59, "median_ms": 8585},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 28, "median_ms": 8750},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 8, "median_ms": 8664},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 8, "median_ms": 8605},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 8507},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 4, "median_ms": 8766}
+      ]
+    },
+    {
+      "name": "clipping",
+      "desc": "microphone clips heavily (signal RMS 0.9), room",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 0, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 140, "median_ms": 9851},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 18, "median_ms": 8626},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 143, "median_ms": 5836},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 34, "median_ms": 8669},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 8528},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8890},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8666},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8686},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8563}
+      ]
+    },
+    {
+      "name": "faint",
+      "desc": "very quiet signal (RMS 0.0005), room",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 17, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 64, "median_ms": 9192},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 28, "median_ms": 7987},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 45, "median_ms": 5932},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 5, "median_ms": 8603},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8564},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8686},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8910},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8768},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8685}
+      ]
+    },
+    {
+      "name": "thump",
+      "desc": "room + three thumps during the frame (peak 14 dB above the signal)",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 11, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 44, "median_ms": 8706},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 61, "median_ms": 8027},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 53, "median_ms": 5713},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 6, "median_ms": 8568},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8761},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8685},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8541},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8621},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8508}
+      ]
+    },
+    {
+      "name": "speech",
+      "desc": "room + 0.5 s of speech-like interference during the frame (6 dB above the signal)",
+      "holdout": false,
+      "min_snr_db": -6,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 0, "detected": 6, "ber": null, "corrected": 71, "median_ms": null},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 50, "median_ms": 8855},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 67, "median_ms": 8912},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 52, "median_ms": 5654},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 6, "median_ms": 8803},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8642},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8709},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8450},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8690},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8808}
+      ]
+    },
+    {
+      "name": "measured:20261111T080523Z-mac-g100",
+      "desc": "measured channel and background noise MacBook Pro, own speaker -> own microphone, study",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 50, "median_ms": 8726},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 29, "median_ms": 8610},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 18, "median_ms": 8685},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 11, "median_ms": 8607},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 4, "median_ms": 8669},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 8543},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8665},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8742},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8582},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8650}
+      ]
+    },
+    {
+      "name": "measured:20261111T080523Z-mac-g100:far",
+      "desc": "measured channel and background noise, direct sound -14 dB (derived) MacBook Pro, own speaker -> own microphone, study",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 86, "median_ms": 8550},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 69, "median_ms": 8667},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 58, "median_ms": 8622},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 40, "median_ms": 8630},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 38, "median_ms": 8846},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 29, "median_ms": 8746},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 26, "median_ms": 8647},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 27, "median_ms": 8666},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 23, "median_ms": 8546},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 28, "median_ms": 8748}
+      ]
+    },
+    {
+      "name": "measured:20261111T080534Z-mac-g030",
+      "desc": "measured channel and background noise MacBook Pro, own speaker -> own microphone, study",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 12, "median_ms": 8644},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 7, "median_ms": 8850},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 3, "median_ms": 8524},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8544},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8561},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 1, "median_ms": 8841},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8684},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8570},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8667},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 0, "median_ms": 8822}
+      ]
+    },
+    {
+      "name": "measured:20261111T080534Z-mac-g030:far",
+      "desc": "measured channel and background noise, direct sound -14 dB (derived) MacBook Pro, own speaker -> own microphone, study",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 36, "median_ms": 8724},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 22, "median_ms": 8785},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 19, "median_ms": 8607},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 16, "median_ms": 8664},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 17, "median_ms": 8485},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 23, "median_ms": 8887},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 14, "median_ms": 8582},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 18, "median_ms": 8650},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 27, "median_ms": 8668},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 17, "median_ms": 8590}
+      ]
+    },
+    {
+      "name": "measured:20261117T111940Z-mac-g030",
+      "desc": "measured channel and background noise MacBook Pro, own speaker -> own microphone; recheck of the high band for v1-us",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 41, "median_ms": 8448},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 26, "median_ms": 8767},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 32, "median_ms": 8405},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 18, "median_ms": 8489},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 10, "median_ms": 8449},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 12, "median_ms": 8482},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 4, "median_ms": 8690},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 6, "median_ms": 8658},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 3, "median_ms": 8744},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 2, "median_ms": 8723}
+      ]
+    },
+    {
+      "name": "measured:20261117T111940Z-mac-g030:far",
+      "desc": "measured channel and background noise, direct sound -14 dB (derived) MacBook Pro, own speaker -> own microphone; recheck of the high band for v1-us",
+      "holdout": false,
+      "min_snr_db": -9,
+      "points": [
+        {"snr_db": -9, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 41, "median_ms": 8521},
+        {"snr_db": -6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 53, "median_ms": 8681},
+        {"snr_db": -3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 39, "median_ms": 8684},
+        {"snr_db": 0, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 58, "median_ms": 8809},
+        {"snr_db": 3, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 39, "median_ms": 8502},
+        {"snr_db": 6, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 42, "median_ms": 8665},
+        {"snr_db": 12, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 37, "median_ms": 8503},
+        {"snr_db": 18, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 44, "median_ms": 8629},
+        {"snr_db": 24, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 32, "median_ms": 8584},
+        {"snr_db": 30, "n": 6, "ok": 6, "detected": 6, "ber": null, "corrected": 34, "median_ms": 8568}
+      ]
+    }
+  ]
+}

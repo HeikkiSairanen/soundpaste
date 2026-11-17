@@ -20,6 +20,7 @@
 //! | 7 received | id u16, length u32, bytes |
 //! | 8 receive aborted | reason u8 |
 //! | 9 log | UTF-8 text |
+//! | 10 band | band u8, sending u8, lowest Hz u32, highest Hz u32 |
 
 use modem_core::link::{AbortReason, Event, FailReason, Hint, LinkConfig, SendError, TxStatus};
 use modem_core::phy::PhyKind;
@@ -60,29 +61,32 @@ pub unsafe extern "C" fn sp_free(ptr: *mut u8, len: usize) {
     drop(Vec::from_raw_parts(ptr, 0, len.max(1)));
 }
 
-/// Lowest sample rate at which the ultrasonic mode works: its band reaches 20 kHz.
-const ULTRASONIC_MIN_RATE: f32 = 44000.0;
-
-/// Create the station. The sample rate comes from the AudioContext, the seed from the
-/// browser's random source. Flags: bit 0 = always a separate handshake (no inline start),
-/// bit 1 = ultrasonic mode (17.6–20 kHz; ignored below 44 kHz, see `sp_ultrasonic`).
-/// Calling it again replaces the station (the page's mode switch).
+/// Create the station: by default on the band ladder (DESIGN.md 5.9), with the bands
+/// that fit under the sample rate. The sample rate comes from the AudioContext, the seed
+/// from the browser's random source. Flags (troubleshooting): bit 0 = always a separate
+/// handshake (no inline start; only matters on a single band), bit 1 = normal band only.
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn sp_new(sample_rate: f32, seed_lo: u32, seed_hi: u32, flags: u32) {
     let cfg = LinkConfig { inline_start: flags & 1 == 0, ..LinkConfig::default() };
     let seed = ((seed_hi as u64) << 32) | seed_lo as u64;
-    let kind = if flags & 2 != 0 && sample_rate >= ULTRASONIC_MIN_RATE { PhyKind::Mfsk(&modem_core::phy::mfsk::ULTRASONIC) } else { PhyKind::DEFAULT };
-    let station = Station::new(kind, sample_rate as f64, cfg, seed);
+    let bands = if flags & 2 != 0 { vec![PhyKind::DEFAULT] } else { modem_core::phy::ladder_for(sample_rate as f64) };
+    let station = Station::with_bands(&bands, sample_rate as f64, cfg, seed);
     unsafe {
         STATE = Some(State { station, input: vec![0.0; MAX_BLOCK], output: vec![0.0; MAX_BLOCK] });
     }
 }
 
-/// 1 if the current station is in ultrasonic mode.
+/// Number of bands the station listens on.
 #[no_mangle]
-pub extern "C" fn sp_ultrasonic() -> u32 {
-    state().map_or(0, |s| (s.station.phy() == PhyKind::Mfsk(&modem_core::phy::mfsk::ULTRASONIC)) as u32)
+pub extern "C" fn sp_band_count() -> u32 {
+    state().map_or(0, |s| s.station.bands().len() as u32)
+}
+
+/// Highest frequency of band `i` in Hz (0 if there is no such band).
+#[no_mangle]
+pub extern "C" fn sp_band_top_hz(i: u32) -> u32 {
+    state().and_then(|s| s.station.bands().get(i as usize).map(|k| k.band_hz().1.round() as u32)).unwrap_or(0)
 }
 
 #[no_mangle]
@@ -243,6 +247,11 @@ pub fn encode_event(e: &Event) -> Vec<u8> {
             b.push(9);
             b.extend_from_slice(s.as_bytes());
         }
+        Event::Band { band, sending, lo_hz, hi_hz } => {
+            b.extend_from_slice(&[10, *band, *sending as u8]);
+            u32le(&mut b, *lo_hz);
+            u32le(&mut b, *hi_hz);
+        }
     }
     b
 }
@@ -292,6 +301,7 @@ mod tests {
         assert_eq!(encode_event(&Event::Received { id: 1, data: "é".as_bytes().to_vec() }), [7, 1, 0, 2, 0, 0, 0, 0xC3, 0xA9]);
         assert_eq!(encode_event(&Event::RxAborted { reason: AbortReason::Cancelled }), [8, 1]);
         assert_eq!(encode_event(&Event::Log("ok".into())), [9, b'o', b'k']);
+        assert_eq!(encode_event(&Event::Band { band: 3, sending: true, lo_hz: 17600, hi_hz: 20000 }), [10, 3, 1, 0xC0, 0x44, 0, 0, 0x20, 0x4E, 0, 0]);
     }
 
     #[test]
@@ -306,7 +316,8 @@ mod tests {
             assert_eq!(sp_send(ptr, msg.len()), 1);
             sp_free(ptr, msg.len());
         }
-        assert!(sp_estimate(msg.len()) > 1.0 && sp_estimate(msg.len()) < 4.0);
+        // Ladder: no inline start, START on every band, the rest on the top band.
+        assert!(sp_estimate(msg.len()) > 4.0 && sp_estimate(msg.len()) < 12.0, "{}", sp_estimate(msg.len()));
         assert_eq!(sp_max_message(), 512);
         // The peer is an ordinary station; audio goes straight from one buffer to the other.
         let mut peer = Station::new(PhyKind::DEFAULT, 48000.0, LinkConfig::default(), 9);
@@ -346,15 +357,14 @@ mod tests {
         assert!(delivered);
         assert!(sp_level() >= 0.0 && sp_now_ms() > 7000.0);
 
-        // The mode switch replaces the station. (In the same test: the module state is global.)
-        let normal = sp_estimate(60);
-        assert_eq!(sp_ultrasonic(), 0);
+        // The ladder fits its bands under the sample rate. (In the same test: the module
+        // state is global.)
+        assert_eq!(sp_band_count(), 4);
+        assert_eq!(sp_band_top_hz(3), 20000);
+        sp_new(32000.0, 3, 4, 0);
+        assert_eq!(sp_band_count(), 2);
+        assert_eq!(sp_band_top_hz(1), 14400);
         sp_new(48000.0, 3, 4, 2);
-        assert_eq!(sp_ultrasonic(), 1);
-        assert!(sp_estimate(60) > 1.5 * normal);
-        assert_eq!(sp_max_message(), 512);
-        // Too low a sample rate for the band: falls back to the normal mode.
-        sp_new(32000.0, 3, 4, 2);
-        assert_eq!(sp_ultrasonic(), 0);
+        assert_eq!(sp_band_count(), 1);
     }
 }
