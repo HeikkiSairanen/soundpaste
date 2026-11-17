@@ -25,6 +25,7 @@ pub struct StationStats {
 }
 
 pub struct Station {
+    kind: PhyKind,
     fs: f64,
     link: Link,
     modulator: Box<dyn Modulator>,
@@ -44,6 +45,7 @@ pub struct Station {
 impl Station {
     pub fn new(kind: PhyKind, fs: f64, cfg: LinkConfig, seed: u64) -> Self {
         Station {
+            kind,
             fs,
             link: Link::new(cfg, seed),
             modulator: kind.modulator(fs),
@@ -65,6 +67,11 @@ impl Station {
 
     pub fn now_ms(&self) -> u64 {
         self.ms(self.n)
+    }
+
+    /// The waveform the station sends and listens for.
+    pub fn phy(&self) -> PhyKind {
+        self.kind
     }
 
     pub fn sample_rate(&self) -> f64 {

@@ -75,6 +75,9 @@ Do not tune for a single room or device pair, and do not adjust tests to make th
 - Default waveform `v1` (16 × 4-FSK, tone hopping, chirp preamble,
   Reed–Solomon), link layer (`link/`), station (`station.rs`) and two-way
   simulation (`sim/duplex.rs`).
+- Ultrasonic mode `v1-us` (17.6–20 kHz, K 6, `Time` layout, no clipping), a switch on the
+  page (EXPERIMENTS.md entry 7). Simulated only: about 2.1 × slower than `v1`, not yet
+  run over real audio.
 - Baseline `bench/baseline.json`: session mode, 60-character link 2.85 s, success
   94.2 % in nominal conditions (the missing part is the `hall` profile, which does not
   work), lowest SNR in a room -6 dB.

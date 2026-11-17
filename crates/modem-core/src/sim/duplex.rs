@@ -282,6 +282,37 @@ mod tests {
     }
 
     #[test]
+    fn ultrasonic_longest_message_between_44k_and_48k() {
+        // Longer frames than v1: the receiver's timeouts must still hold, and the
+        // 44.1 kHz side's band edge sits right under its Nyquist frequency.
+        let mut cfg = room(7);
+        cfg.kind = PhyKind::Mfsk(&crate::phy::mfsk::ULTRASONIC);
+        cfg.sides[1].fs = 44100.0;
+        cfg.sides[1].ir = synth_ir(44100.0, 0.35, 8.0, 17);
+        cfg.sides[1].self_ir = synth_ir(44100.0, 0.35, 14.0, 18);
+        cfg.clock_ppm = 100.0;
+        let mut d = Duplex::new(&cfg);
+        d.run(0.3);
+        let msg: Vec<u8> = (0..512).map(|i| (i * 31 + 5) as u8).collect();
+        d.stations[0].send(&msg).unwrap();
+        assert!(d.run_until(120.0, |d| d.settled(0)), "{}", d.log());
+        assert_eq!(d.received(1), vec![msg], "{}", d.log());
+        assert!(d.delivered_ms(0).is_some(), "{}", d.log());
+    }
+
+    #[test]
+    fn normal_and_ultrasonic_stations_do_not_hear_each_other() {
+        let mut d = Duplex::new(&room(8));
+        d.stations[1] = Station::new(PhyKind::Mfsk(&crate::phy::mfsk::ULTRASONIC), 48000.0, LinkConfig::default(), 99);
+        d.run(0.3);
+        d.stations[1].send(LINK).unwrap();
+        assert!(d.run_until(20.0, |d| d.settled(1)), "{}", d.log());
+        assert!(d.events[1].iter().any(|e| matches!(e, Event::Failed { reason: FailReason::NoReceiver, .. })), "{}", d.log());
+        assert!(d.received(0).is_empty());
+        assert_eq!(d.stations[0].stats().preambles, 0);
+    }
+
+    #[test]
     fn both_press_send_and_both_messages_arrive() {
         let mut d = Duplex::new(&room(3));
         d.run(0.4);

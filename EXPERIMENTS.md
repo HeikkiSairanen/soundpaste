@@ -322,3 +322,100 @@ of the minimum SNR from -9 to -6 dB. No modem code changed (the diff in
 noise and the baseline was updated. The labels in the stored modulation
 comparison outputs in `bench/experiments/` were translated in place; their
 numbers are the original ones.
+
+## 7. Ultrasonic mode: the same waveform on 17.6–20.0 kHz (2026-11-17)
+
+**Motivation.** The user asked for a mode that uses only the highest pitches,
+switchable from the page, so that a transfer is (nearly) silent to people.
+
+**What the existing data says.** The channel measurements of entry 1
+(MacBook Pro, own speaker -> own microphone) were re-analysed above 15 kHz
+from the impulse responses. Relative to the current band (1–7.4 kHz):
+15–19.5 kHz is -8 to -12 dB and flat within ±2 dB, 19.5–20 kHz -12 dB. The
+measurement sweep stops at 20 kHz, so nothing is known above that. Background
+noise up there is much lower than in the speech band, so the per-tone SNR of
+the third-octave band at 20 kHz (62 dB) is better than at 1 kHz (40 dB).
+
+**Choice.** 20 kHz is the hard upper limit anyway: a 44.1 kHz codec's
+anti-alias filter passes only up to about 0.45·fs = 19.8–20 kHz. The band is
+2.4 kHz wide: 96 tones at the same 25 Hz spacing = K 6 × M 4 × G 4, from 17.6
+to 20.0 kHz. Everything else (symbol timing, chirp, Reed–Solomon) is the v1
+waveform, so ultrasonic is one more `MfskParams` preset (`v1-us`). K drops
+from 16 to 6, so the raw rate drops to 6/16 = 38 % of v1.
+
+**Hypothesis.** (1) In simulation `v1-us` reaches the same SNR limits as v1
+in the room profiles (the simulator's noise is white or pink, so the
+narrower band neither helps nor hurts much at the same in-band SNR), and a
+60-character transfer takes about 2–2.5 × as long. (2) The byte layout
+matters more in ultrasonic than in v1: the real response near the band edge
+(19.5–20 kHz, and above 19.8 kHz on 44.1 kHz devices) can kill a whole
+subchannel. With `Freq` one dead subchannel out of 6 touches most bytes;
+with `Time` it ruins only a sixth of them, which Reed–Solomon with erasures
+covers. Expect `Time` to be the right layout for ultrasonic.
+
+**Finding on the way: clipping is audible.** The first version kept v1's
+level (RMS 0.45, peaks clipped at 0.9). Hard clipping a sum of high tones
+spreads distortion over the whole spectrum: averaged over the frame, the
+energy below 12 kHz was only 27 dB under the signal (worst 20 ms window
+-22 dB), i.e. an audible hiss and crackle, and at 44.1 kHz the products also
+alias. Six tones peak at most at 6/√3 ≈ 3.5 × RMS, so `v1-us` sends at RMS
+0.26 and never clips. After that the energy below 12 kHz is -92 dB and
+12–15 kHz -82 dB (worst window) relative to the signal. What is left at
+15–17 kHz (worst window -52 dB) is the 2 ms edges of the chirp. The level is
+4.8 dB below v1, which the channel's 13 dB better per-tone SNR up there
+covers on the measured Mac.
+
+**Result, simulation (session bench, 6 runs/point, not saved).**
+
+| | v1 (baseline) | v1-us (`Time`) | v1-us-freq |
+|---|---|---|---|
+| 60-char link | 2.85 s | 5.95 s | 5.95 s |
+| success, nominal | 94.2 % | 95.0 % | 95.8 % |
+| min SNR, room | -6 dB | -6 dB | -6 dB |
+| measured Mac profiles | -9 dB | -9 dB | -9 dB |
+| net rate | 21.1 B/s | 10.1 B/s | 10.1 B/s |
+
+Hypothesis (1) held: same SNR limits, 2.1 × the transfer time.
+
+**Result, band edge.** Encoded at 44.1 kHz, brick-wall low-pass, white noise
+at the given SNR in the modem band, 8 seeds, file decode:
+
+| cutoff | layout | 6 dB | 3 dB | 0 dB | -3 dB |
+|---|---|---|---|---|---|
+| none | Time | 8/8 | 8/8 | 8/8 | 8/8 |
+| none | Freq | 8/8 | 8/8 | 8/8 | 8/8 |
+| 19.8 kHz | Time | 8/8 | 8/8 | 8/8 | 6/8 |
+| 19.8 kHz | Freq | 0/8 | 0/8 | 0/8 | 0/8 |
+| 19.5 kHz | Time | 8/8 | 8/8 | 8/8 | 5/8 |
+| 19.5 kHz | Freq | 0/8 | 0/8 | 0/8 | 0/8 |
+
+Hypothesis (2) held decisively: with the `Freq` layout a single lost
+subchannel loses every frame (the header too), with `Time` it costs a few dB
+at most. `v1-us` uses `Time`; `v1-us-freq` stays as a comparison preset.
+
+**Other checks.** Duplex tests: a 512-byte ultrasonic message between a
+48 kHz and a 44.1 kHz station with 100 ppm clock error is delivered (the
+link layer's timeouts did not need changes), and a normal-mode station does
+not even detect an ultrasonic preamble (the bands do not overlap). v1 bench
+unchanged, 0 regressions.
+
+**In the page.** A switch ("Ultrasonic") above Start, remembered in the
+browser, `?mode=ultrasonic|normal` overrides. Switching rebuilds the station
+in the running worklet (flag bit 1 of `sp_new`); it is disabled during a send
+or receive. Below 44 kHz the station falls back to normal mode and the page
+says so.
+
+**Open.** Nothing over real audio yet. The Mac's response is measured only
+up to 20 kHz and only speaker -> own microphone at 0 m; at a distance and on
+the PC the band edge is unknown, and many PC microphones (and any that the
+browser resamples to 16 kHz) will not pass 17.6 kHz at all. Next step:
+`soundpaste acoustic --phy v1-us` on the Mac (with permission), then the two
+computers. Whether the 2 ms chirp edges are audible as a tick also needs ears.
+
+**First real-audio attempt (void).** `acoustic --phy v1-us` at gains 1.0–0.01
+detected nothing, and a `v1` control at 0.3 failed as well. The cause was
+macOS output being muted (volume 55, `output muted:true`), not the waveform.
+The recordings and the channel measurement made in that state were taken out
+of the corpus. One useful by-product: in the November sweep recording the
+sweep stands 47–58 dB above the background all the way to 19.8 kHz, so this
+Mac's speaker and microphone do pass the ultrasonic band.

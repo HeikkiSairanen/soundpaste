@@ -98,6 +98,9 @@ pub static MFSK_PRESETS: &[mfsk::MfskParams] = &[
     mfsk::MfskParams { name: "v1-cf03", chirp_fraction: 0.03, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-cf06", chirp_fraction: 0.06, ..mfsk::BASE },
     mfsk::MfskParams { name: "v1-cf12", chirp_fraction: 0.12, ..mfsk::BASE },
+    // Ultrasonic mode (EXPERIMENTS.md entry 7).
+    mfsk::ULTRASONIC,
+    mfsk::MfskParams { name: "v1-us-freq", layout: mfsk::ByteLayout::Freq, ..mfsk::ULTRASONIC },
 ];
 
 impl PhyKind {

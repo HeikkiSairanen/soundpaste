@@ -99,6 +99,13 @@ pub const BASE: MfskParams = MfskParams {
     clip: 0.9,
 };
 
+/// Ultrasonic mode (EXPERIMENTS.md entry 7): the v1 waveform on 17.6–20.0 kHz,
+/// nearly inaudible to adults. 96 tones = K 6 × M 4 × G 4. The top stays at 20 kHz
+/// because a 44.1 kHz device's anti-alias filter cuts off just above it. A byte
+/// travels in one subchannel (`Time`), so a subchannel lost to the speaker's or
+/// microphone's roll-off ruins only a sixth of the bytes.
+pub const ULTRASONIC: MfskParams = MfskParams { name: "v1-us", mode_id: 1, f0: 17600.0, k: 6, layout: ByteLayout::Time, rms: 0.26, ..BASE };
+
 impl MfskParams {
     fn bps(&self) -> usize {
         self.m.trailing_zeros() as usize

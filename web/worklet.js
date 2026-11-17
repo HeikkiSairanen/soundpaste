@@ -42,18 +42,21 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
         // A new module can be swapped in live: the microphone and audio stay on.
         const module = new WebAssembly.Module(m.wasm);
         const x = new WebAssembly.Instance(module, {}).exports;
-        x.sp_new(sampleRate, m.seed[0] >>> 0, m.seed[1] >>> 0, m.flags | 0);
         this.x = x;
         this.mem = null;
         this.eventCap = 4096;
         this.eventPtr = x.sp_alloc(this.eventCap);
         this.statsPtr = x.sp_alloc(32);
-        this.port.postMessage({ type: 'ready', sampleRate, maxMessage: x.sp_max_message() });
+        this.newStation(m.seed, m.flags);
         return;
       }
       const x = this.x;
       if (!x) return;
-      if (m.type === 'send') {
+      if (m.type === 'mode') {
+        // Mode switch: a new station on the same module. An unfinished send or
+        // receive is dropped; the page only allows this while idle.
+        this.newStation(m.seed, m.flags);
+      } else if (m.type === 'send') {
         const bytes = new Uint8Array(m.bytes);
         const p = x.sp_alloc(bytes.length);
         new Uint8Array(x.memory.buffer, p, bytes.length).set(bytes);
@@ -77,6 +80,12 @@ class SoundpasteProcessor extends AudioWorkletProcessor {
     } catch (err) {
       this.port.postMessage({ type: 'error', message: String(err && err.message ? err.message : err) });
     }
+  }
+
+  newStation(seed, flags) {
+    const x = this.x;
+    x.sp_new(sampleRate, seed[0] >>> 0, seed[1] >>> 0, flags | 0);
+    this.port.postMessage({ type: 'ready', sampleRate, maxMessage: x.sp_max_message(), ultrasonic: x.sp_ultrasonic() === 1 });
   }
 
   process(inputs, outputs) {

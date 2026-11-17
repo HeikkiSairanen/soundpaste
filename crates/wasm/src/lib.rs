@@ -60,17 +60,29 @@ pub unsafe extern "C" fn sp_free(ptr: *mut u8, len: usize) {
     drop(Vec::from_raw_parts(ptr, 0, len.max(1)));
 }
 
+/// Lowest sample rate at which the ultrasonic mode works: its band reaches 20 kHz.
+const ULTRASONIC_MIN_RATE: f32 = 44000.0;
+
 /// Create the station. The sample rate comes from the AudioContext, the seed from the
-/// browser's random source. Flags: bit 0 = always a separate handshake (no inline start).
+/// browser's random source. Flags: bit 0 = always a separate handshake (no inline start),
+/// bit 1 = ultrasonic mode (17.6–20 kHz; ignored below 44 kHz, see `sp_ultrasonic`).
+/// Calling it again replaces the station (the page's mode switch).
 #[no_mangle]
 #[allow(static_mut_refs)]
 pub extern "C" fn sp_new(sample_rate: f32, seed_lo: u32, seed_hi: u32, flags: u32) {
     let cfg = LinkConfig { inline_start: flags & 1 == 0, ..LinkConfig::default() };
     let seed = ((seed_hi as u64) << 32) | seed_lo as u64;
-    let station = Station::new(PhyKind::DEFAULT, sample_rate as f64, cfg, seed);
+    let kind = if flags & 2 != 0 && sample_rate >= ULTRASONIC_MIN_RATE { PhyKind::Mfsk(&modem_core::phy::mfsk::ULTRASONIC) } else { PhyKind::DEFAULT };
+    let station = Station::new(kind, sample_rate as f64, cfg, seed);
     unsafe {
         STATE = Some(State { station, input: vec![0.0; MAX_BLOCK], output: vec![0.0; MAX_BLOCK] });
     }
+}
+
+/// 1 if the current station is in ultrasonic mode.
+#[no_mangle]
+pub extern "C" fn sp_ultrasonic() -> u32 {
+    state().map_or(0, |s| (s.station.phy() == PhyKind::Mfsk(&modem_core::phy::mfsk::ULTRASONIC)) as u32)
 }
 
 #[no_mangle]
@@ -333,5 +345,16 @@ mod tests {
         assert_eq!(got.as_deref(), Some(&msg[..]));
         assert!(delivered);
         assert!(sp_level() >= 0.0 && sp_now_ms() > 7000.0);
+
+        // The mode switch replaces the station. (In the same test: the module state is global.)
+        let normal = sp_estimate(60);
+        assert_eq!(sp_ultrasonic(), 0);
+        sp_new(48000.0, 3, 4, 2);
+        assert_eq!(sp_ultrasonic(), 1);
+        assert!(sp_estimate(60) > 1.5 * normal);
+        assert_eq!(sp_max_message(), 512);
+        // Too low a sample rate for the band: falls back to the normal mode.
+        sp_new(32000.0, 3, 4, 2);
+        assert_eq!(sp_ultrasonic(), 0);
     }
 }
