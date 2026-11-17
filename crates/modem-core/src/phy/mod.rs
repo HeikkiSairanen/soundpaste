@@ -111,10 +111,26 @@ pub static MFSK_PRESETS: &[mfsk::MfskParams] = &[
 /// sender moves as high as both directions allow.
 pub const LADDER: [PhyKind; 4] = [PhyKind::Mfsk(&mfsk::BASE), PhyKind::Mfsk(&mfsk::BAND12), PhyKind::Mfsk(&mfsk::BAND15), PhyKind::Mfsk(&mfsk::ULTRASONIC)];
 
-/// The ladder bands usable at sample rate `fs`: a band must end below 0.45·fs, where a
-/// device's anti-alias filter still passes it.
+/// The ladder bands usable at sample rate `fs`: a band must end by about 0.455·fs, where
+/// a device's anti-alias filter still passes most of it. At 44.1 kHz that is 20.07 kHz, so
+/// the top band stays (its last tone is at 19.975 kHz, and the `Time` layout survives a
+/// lost top subchannel: EXPERIMENTS.md entry 7).
 pub fn ladder_for(fs: f64) -> Vec<PhyKind> {
-    LADDER.iter().copied().filter(|k| k.band_hz().1 <= 0.45 * fs + 1.0).collect()
+    LADDER.iter().copied().filter(|k| k.band_hz().1 <= 0.455 * fs).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ladder_fits_the_sample_rate() {
+        let tops = |fs: f64| ladder_for(fs).iter().map(|k| k.band_hz().1).collect::<Vec<_>>();
+        assert_eq!(tops(48000.0), [7400.0, 14400.0, 17200.0, 20000.0]);
+        assert_eq!(tops(44100.0), [7400.0, 14400.0, 17200.0, 20000.0]);
+        assert_eq!(tops(32000.0), [7400.0, 14400.0]);
+        assert_eq!(tops(24000.0), [7400.0]);
+    }
 }
 
 impl PhyKind {
