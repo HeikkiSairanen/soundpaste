@@ -419,3 +419,26 @@ The recordings and the channel measurement made in that state were taken out
 of the corpus. One useful by-product: in the November sweep recording the
 sweep stands 47–58 dB above the background all the way to 19.8 kHz, so this
 Mac's speaker and microphone do pass the ultrasonic band.
+
+**Real audio on the Mac (loop B, output unmuted).** MacBook Pro, own speaker
+-> own microphone, system volume 55, same study as entry 1:
+
+| gain | v1-us | v1 (today) | v1 (2026-11-11) |
+|---|---|---|---|
+| 1.0 | ok, 36.9 dB | | |
+| 0.3 | ok, 36.0 dB | ok, 28.1 dB | |
+| 0.1 | ok, 34.2 dB | | ok, 27.9 dB |
+| 0.03 | ok, 25.3 dB | | ok, 26.0 dB |
+| 0.01 | ok, 23.2 dB | | |
+
+5/5, no corrected bytes at any gain. At the same gain, one minute apart, v1-us
+had 8 dB more SNR than v1. A fresh channel measurement shows why: the room was
+noisier than in November in the speech band (2 kHz in the silence before the
+sweep: 68 dB vs 37 dB), while 17–20 kHz was as quiet as before. The speaker
+-> microphone response at 17–19.5 kHz matched November's within a few dB
+(-5 to -10 dB relative to 1–7.4 kHz, 19.5–20 kHz -14 dB).
+
+**Still open.** This is one machine at 0 m talking to itself. Two computers
+(the PC's speaker and microphone above 17.6 kHz) and distance are unmeasured,
+and so is audibility (the chirp edges, anything a speaker's nonlinearity
+folds down) — that needs ears.
