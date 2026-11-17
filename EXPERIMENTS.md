@@ -523,3 +523,38 @@ DESIGN.md 5.9.
 untested. The 12 dB threshold puts the top band about 12 dB above where `v1-us`
 alone still decodes in the bench; real data may justify lowering it. The
 inline start is gone, so short messages take about 8.6 s instead of 2.85 s.
+
+## 9. Separate bands for the data and for the replies (2026-11-17)
+
+**What the first Mac <-> PC run showed** (PC browser log, Mac browser and Mac
+CLI): the PC's START on the high bands never reached the Mac (the Mac's report:
+band 0 only, 20 dB), and the PC's own microphone barely heard its own high
+bands (6–14 dB, rejected) while band 0 was fine: the PC's speakers are weak
+above about 12 kHz. Mac -> PC worked on the high bands: the PC heard the
+Mac's START at 17/18/14/14 dB per band (Mac at system volume 98) and received
+data on band 3. Because the ladder of entry 8 needs one band that works both
+ways, every transfer between these two ended on band 0.
+
+(A correction to an intermediate reading: a CLI test seemed to show the PC
+hearing 26–35 dB per band; that report came from the browser tab on the same
+Mac, which answered as well. The PC's own log has the numbers above.)
+
+**Change.** The sender chooses two bands: the data band = the highest band the
+receiver reported at >= 12 dB (A -> B), the reply band = the highest band on
+which it heard the START_ACK at >= 12 dB (B -> A). DATA and POLL carry the
+reply band in flag bits 1–2; the receiver answers there. The fallback drops
+both to band 0.
+
+**Hypothesis.** Between this Mac and PC, Mac -> PC moves the data to a high
+band with replies on band 0; PC -> Mac stays on band 0. In simulation nothing
+changes when the channel is symmetric; the duplex test whose return direction
+is cut at 17.4 kHz now carries the data on band 3 and the replies on band 2.
+
+**Result, simulation.** The ladder bench is unchanged (8.65 s, 96.3 %, 0
+regressions against entry 8's run; its channels are symmetric). Link tests:
+the PC's numbers from the log above (A -> B 17/18/14/14, B -> A band 0 only)
+give data on band 3 with answers on band 0. Duplex: with A's microphone cut at
+17.4 kHz the data goes on band 3 and B's DONE on band 2; cut at 9 kHz, the
+data on band 3 and the answers on band 0.
+
+Not yet run between the Mac and the PC: the PC needs the published page.

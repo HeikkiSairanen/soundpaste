@@ -77,9 +77,10 @@ Do not tune for a single room or device pair, and do not adjust tests to make th
   simulation (`sim/duplex.rs`).
 - Band ladder (DESIGN.md 5.9, EXPERIMENTS.md entries 7–8), the page's default and
   `live`'s: the START probes 1–7.4, 12–14.4, 14.8–17.2 and 17.6–20 kHz at once, the data
-  goes on the highest band both directions hear at >= 12 dB, fallback to the normal
-  band. 60-char link about 8.6 s (v1 alone 2.85 s). Loop D works on band 3; two
-  different computers not yet tried. `--phy ladder` in bench/session/live.
+  goes on the highest band the receiver hears at >= 12 dB and the answers on the highest
+  band the sender hears (entry 9), fallback to the normal band. 60-char link about
+  8.6 s (v1 alone 2.85 s). Loop D works on band 3. Mac <-> PC: the PC's speakers carry
+  only the normal band. `--phy ladder` in bench/session/live.
 - Baseline `bench/baseline.json`: session mode, 60-character link 2.85 s, success
   94.2 % in nominal conditions (the missing part is the `hall` profile, which does not
   work), lowest SNR in a room -6 dB.

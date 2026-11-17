@@ -31,6 +31,7 @@ impl Quality {
 }
 
 const FLAG_EOB: u8 = 0x01; // DATA: last frame of the burst
+const REPLY_SHIFT: u8 = 1; // DATA, POLL: bits 1–2 = band ladder band to answer on (DESIGN.md 5.9)
 const FLAG_RESTART: u8 = 0x01; // ACK: the assembled message did not match, start over
 const FLAG_INLINE: u8 = 0x02; // START: the whole message is at the end of the frame
 #[allow(dead_code)]
@@ -45,13 +46,14 @@ pub enum Frame {
     /// START and its SNR estimate on each, lowest band first. Empty without a ladder; older
     /// decoders ignore it.
     StartAck { id: u16, quality: Quality, report: Vec<(u8, i8)> },
-    Data { id: u16, seq: u8, eob: bool, data: Vec<u8> },
+    /// `reply`: the band the receiver answers on (0–3; 0 without the ladder).
+    Data { id: u16, seq: u8, eob: bool, data: Vec<u8>, reply: u8 },
     /// Combined ack: bit i is 1 if frame i has been stored.
     Ack { id: u16, quality: Quality, restart: bool, bitmap: Vec<u8> },
     /// Final ack: the message is complete and its CRC-32 is this.
     Done { id: u16, crc: u32 },
-    /// The sender asks for the ack again.
-    Poll { id: u16 },
+    /// The sender asks for the ack again (answer on band `reply`).
+    Poll { id: u16, reply: u8 },
     Cancel { id: u16 },
 }
 
@@ -63,7 +65,7 @@ impl Frame {
             | Frame::Data { id, .. }
             | Frame::Ack { id, .. }
             | Frame::Done { id, .. }
-            | Frame::Poll { id }
+            | Frame::Poll { id, .. }
             | Frame::Cancel { id } => *id,
         }
     }
@@ -111,8 +113,8 @@ impl Frame {
                 }
                 b
             }
-            Frame::Data { id, seq, eob, data } => {
-                let mut b = head(3, if *eob { FLAG_EOB } else { 0 }, *id);
+            Frame::Data { id, seq, eob, data, reply } => {
+                let mut b = head(3, if *eob { FLAG_EOB } else { 0 } | (reply & 3) << REPLY_SHIFT, *id);
                 b.push(*seq);
                 b.extend_from_slice(data);
                 b
@@ -128,7 +130,7 @@ impl Frame {
                 b.extend_from_slice(&crc.to_be_bytes());
                 b
             }
-            Frame::Poll { id } => head(6, 0, *id),
+            Frame::Poll { id, reply } => head(6, (reply & 3) << REPLY_SHIFT, *id),
             Frame::Cancel { id } => head(7, 0, *id),
         }
     }
@@ -162,10 +164,10 @@ impl Frame {
                 }
                 Frame::StartAck { id, quality: Quality::decode(body), report }
             }
-            3 if !body.is_empty() => Frame::Data { id, seq: body[0], eob: flags & FLAG_EOB != 0, data: body[1..].to_vec() },
+            3 if !body.is_empty() => Frame::Data { id, seq: body[0], eob: flags & FLAG_EOB != 0, data: body[1..].to_vec(), reply: (flags >> REPLY_SHIFT) & 3 },
             4 if body.len() >= 3 => Frame::Ack { id, quality: Quality::decode(body), restart: flags & FLAG_RESTART != 0, bitmap: body[3..].to_vec() },
             5 if body.len() >= 4 => Frame::Done { id, crc: u32::from_be_bytes([body[0], body[1], body[2], body[3]]) },
-            6 => Frame::Poll { id },
+            6 => Frame::Poll { id, reply: (flags >> REPLY_SHIFT) & 3 },
             7 => Frame::Cancel { id },
             _ => return None,
         })
@@ -185,12 +187,14 @@ mod tests {
             Frame::Start { id: 2, len: 0, frames: 0, chunk: 64, crc: 0, inline: Some(vec![]) },
             Frame::StartAck { id: 9, quality: q, report: vec![] },
             Frame::StartAck { id: 9, quality: q, report: vec![(0, 30), (2, -4), (3, 12)] },
-            Frame::Data { id: 9, seq: 4, eob: true, data: vec![1, 2, 3] },
-            Frame::Data { id: 9, seq: 0, eob: false, data: vec![] },
+            Frame::Data { id: 9, seq: 4, eob: true, data: vec![1, 2, 3], reply: 0 },
+            Frame::Data { id: 9, seq: 0, eob: false, data: vec![], reply: 3 },
+            Frame::Data { id: 9, seq: 1, eob: true, data: vec![7], reply: 2 },
             Frame::Ack { id: 9, quality: q, restart: false, bitmap: vec![0b1011_0000] },
             Frame::Ack { id: 9, quality: Quality::default(), restart: true, bitmap: vec![0] },
             Frame::Done { id: 9, crc: 0x01020304 },
-            Frame::Poll { id: 0xFFFF },
+            Frame::Poll { id: 0xFFFF, reply: 0 },
+            Frame::Poll { id: 1, reply: 1 },
             Frame::Cancel { id: 0 },
         ];
         for f in frames {
@@ -201,7 +205,7 @@ mod tests {
     #[test]
     fn sizes_match_design() {
         assert_eq!(Frame::Start { id: 1, len: 60, frames: 1, chunk: 64, crc: 0, inline: None }.encode().len(), 11);
-        assert_eq!(Frame::Poll { id: 1 }.encode().len(), 3);
+        assert_eq!(Frame::Poll { id: 1, reply: 0 }.encode().len(), 3);
         assert_eq!(Frame::Done { id: 1, crc: 0 }.encode().len(), 7);
     }
 

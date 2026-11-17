@@ -209,6 +209,8 @@ struct Outgoing {
     report: [Option<i8>; 8],
     heard_back: [Option<i8>; 8],
     band: Option<u8>,
+    /// The band the receiver is asked to answer on (the best B -> A band).
+    reply_band: u8,
 }
 
 struct Incoming {
@@ -219,8 +221,9 @@ struct Incoming {
     parts: Vec<Option<Vec<u8>>>,
     last_valid: Ms,
     burst_seen: bool,
-    /// The band the data frames arrive on.
+    /// The band the data frames arrive on and the band the sender asked for answers on.
     band: Option<u8>,
+    reply_band: u8,
 }
 
 pub struct Link {
@@ -230,8 +233,10 @@ pub struct Link {
     incoming: Option<Incoming>,
     /// The reply to send in the receiver role, the time to send it and its band mask.
     reply: Option<(Ms, Frame, u8)>,
-    /// Band of the frame being handled: replies go back on the band they were asked on.
+    /// Band of the frame being handled, and the band its reply goes on (the band asked for
+    /// in a DATA or POLL frame, otherwise the band the frame came on).
     rx_band: u8,
+    reply_to: u8,
     /// Completed messages: (identifier, CRC-32, length, completion time).
     done: VecDeque<(u16, u32, usize, Ms)>,
     actions: VecDeque<Action>,
@@ -252,6 +257,7 @@ impl Link {
             incoming: None,
             reply: None,
             rx_band: 0,
+            reply_to: 0,
             done: VecDeque::new(),
             actions: VecDeque::new(),
             in_flight: false,
@@ -304,7 +310,7 @@ impl Link {
     /// Schedule a reply on the band of the frame being handled. The same reply asked for
     /// on another band (simultaneous copies of one frame) goes out on both.
     fn schedule_reply(&mut self, at: Ms, f: Frame) {
-        let bit = 1u8 << self.rx_band;
+        let bit = 1u8 << self.reply_to;
         if let Some((_, pending, mask)) = self.reply.as_mut() {
             if *pending == f {
                 *mask |= bit;
@@ -314,11 +320,12 @@ impl Link {
         self.reply = Some((at, f, bit));
     }
 
-    /// The band of the data frames and of everything after the START exchange in the
-    /// sender role (DESIGN.md 5.9): the highest band that both directions heard well enough.
-    fn choose_band(cfg: &LinkConfig, o: &Outgoing) -> u8 {
-        let both = |b: usize| o.report[b].zip(o.heard_back[b]).map(|(x, y)| x.min(y));
-        (1..cfg.bands as usize).rev().find(|&b| both(b).map_or(false, |snr| snr >= cfg.probe_min_snr)).unwrap_or(0) as u8
+    /// The bands after the START exchange in the sender role (DESIGN.md 5.9): the data
+    /// goes on the highest band the receiver heard well enough (A -> B), its answers on the
+    /// highest band we heard its START_ACK on well enough (B -> A). Each falls back to band 0.
+    fn choose_bands(cfg: &LinkConfig, o: &Outgoing) -> (u8, u8) {
+        let best = |v: &[Option<i8>; 8]| (1..cfg.bands as usize).rev().find(|&b| v[b].map_or(false, |snr| snr >= cfg.probe_min_snr)).unwrap_or(0) as u8;
+        (best(&o.report), best(&o.heard_back))
     }
 
     fn band_mask(o: &Outgoing) -> u8 {
@@ -359,6 +366,7 @@ impl Link {
             report: [None; 8],
             heard_back: [None; 8],
             band: None,
+            reply_band: 0,
         });
         self.event(Event::Tx(if held { TxStatus::Deferred } else { TxStatus::Listening }));
         Ok(id)
@@ -456,12 +464,18 @@ impl Link {
     /// Intact frame received on `band` of the ladder.
     pub fn on_frame_band(&mut self, now: Ms, bytes: &[u8], quality: Quality, band: u8) {
         self.rx_band = band.min(7);
+        self.reply_to = self.rx_band;
         self.activity(now);
         let Some(f) = Frame::decode(bytes) else {
             self.log(format!("<- unknown frame ({} bytes)", bytes.len()));
             return;
         };
         let id = f.id();
+        if let Frame::Data { reply, .. } | Frame::Poll { reply, .. } = f {
+            if reply < self.cfg.bands {
+                self.reply_to = reply;
+            }
+        }
         let as_sender = self.outgoing.as_ref().map_or(false, |o| o.id == id);
         let as_receiver = self.incoming.as_ref().map_or(false, |i| i.id == id) || self.done.iter().any(|d| d.0 == id);
 
@@ -490,8 +504,8 @@ impl Link {
 
         match f {
             Frame::Start { id, len, frames, chunk, crc, inline } => self.rx_start(now, id, len as usize, frames as usize, chunk as usize, crc, inline, quality),
-            Frame::Data { id, seq, eob, data } => self.rx_data(now, id, seq as usize, eob, data, quality),
-            Frame::Poll { id } => {
+            Frame::Data { id, seq, eob, data, .. } => self.rx_data(now, id, seq as usize, eob, data, quality),
+            Frame::Poll { id, .. } => {
                 if self.incoming.as_ref().map_or(false, |i| i.id == id) {
                     self.incoming.as_mut().unwrap().last_valid = now;
                     let reply = self.make_ack(now, quality);
@@ -618,15 +632,17 @@ impl Link {
             self.complete(now, id, crc, Vec::new());
             return;
         }
-        self.incoming = Some(Incoming { id, len, chunk, crc, parts: vec![None; frames], last_valid: now, burst_seen: false, band: None });
+        self.incoming = Some(Incoming { id, len, chunk, crc, parts: vec![None; frames], last_valid: now, burst_seen: false, band: None, reply_band: 0 });
         self.schedule_reply(now + self.cfg.response_delay, Frame::StartAck { id, quality: q, report });
     }
 
     fn rx_data(&mut self, now: Ms, id: u16, seq: usize, eob: bool, data: Vec<u8>, q: Quality) {
         let band = self.rx_band;
         let ladder = self.cfg.bands > 1;
+        let reply_to = self.reply_to;
         if let Some(inc) = self.incoming.as_mut().filter(|i| i.id == id) {
             inc.last_valid = now;
+            inc.reply_band = reply_to;
             if inc.band != Some(band) {
                 inc.band = Some(band);
                 if ladder {
@@ -769,6 +785,7 @@ impl Link {
     fn fall_back(&mut self, _now: Ms, why: &str) {
         let o = self.outgoing.as_mut().unwrap();
         o.band = Some(0);
+        o.reply_band = 0;
         o.polls = 0;
         self.log(format!("{why} on the high band: falling back to band 0"));
         self.event(Event::Band { band: 0, sending: true, lo_hz: 0, hi_hz: 0 });
@@ -812,7 +829,7 @@ impl Link {
         if let Some(inc) = self.incoming.as_mut() {
             if inc.burst_seen && !busy && !self.in_flight && self.reply.is_none() && now.saturating_sub(self.last_activity) >= self.cfg.quiet_ack {
                 inc.burst_seen = false;
-                self.rx_band = inc.band.unwrap_or(0);
+                self.reply_to = inc.reply_band;
                 let reply = self.make_ack(now, Quality::default());
                 self.log("burst ended without the end flag, acking".into());
                 self.schedule_reply(now, reply);
@@ -852,25 +869,26 @@ impl Link {
             Phase::Burst { next_at } => {
                 if !self.in_flight && now >= next_at {
                     if o.band.is_none() {
-                        let band = Self::choose_band(&self.cfg, o);
+                        let (band, reply) = Self::choose_bands(&self.cfg, o);
                         let fmt = |v: &[Option<i8>; 8]| (0..self.cfg.bands as usize).map(|b| v[b].map_or("-".to_string(), |s| s.to_string())).collect::<Vec<_>>().join("/");
-                        let msg = format!("band chosen: {band} (SNR per band, there {} back {})", fmt(&o.report), fmt(&o.heard_back));
+                        let msg = format!("band chosen: {band}, replies on {reply} (SNR per band, there {} back {})", fmt(&o.report), fmt(&o.heard_back));
                         let o = self.outgoing.as_mut().unwrap();
                         o.band = Some(band);
+                        o.reply_band = reply;
                         if self.cfg.bands > 1 {
                             self.log(msg);
                             self.event(Event::Band { band, sending: true, lo_hz: 0, hi_hz: 0 });
                         }
                     }
                     let o = self.outgoing.as_mut().unwrap();
-                    let mask = Self::band_mask(o);
+                    let (mask, reply) = (Self::band_mask(o), o.reply_band);
                     if let Some(seq) = o.queue.pop_front() {
                         let eob = o.queue.is_empty();
                         let chunk = self.cfg.chunk;
                         let data = o.data[seq * chunk..((seq + 1) * chunk).min(o.data.len())].to_vec();
                         let (id, frame, of, round) = (o.id, o.burst_len - o.queue.len() as u32, o.burst_len, o.bursts);
                         self.event(Event::Tx(TxStatus::Sending { frame, of, round }));
-                        self.transmit(Frame::Data { id, seq: seq as u8, eob, data }, mask);
+                        self.transmit(Frame::Data { id, seq: seq as u8, eob, data, reply }, mask);
                     }
                 }
             }
@@ -903,9 +921,9 @@ impl Link {
                     }
                     let o = self.outgoing.as_mut().unwrap();
                     o.polls += 1;
-                    let (id, attempt, of, mask) = (o.id, o.polls, self.cfg.poll_tries, Self::band_mask(o));
+                    let (id, attempt, of, mask, reply) = (o.id, o.polls, self.cfg.poll_tries, Self::band_mask(o), o.reply_band);
                     self.event(Event::Tx(TxStatus::Polling { attempt, of }));
-                    self.transmit(Frame::Poll { id }, mask);
+                    self.transmit(Frame::Poll { id, reply }, mask);
                 }
             }
             Phase::Held | Phase::Cancelling => {}

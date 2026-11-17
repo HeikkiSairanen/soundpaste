@@ -433,10 +433,16 @@ A -> B   START on bands 0+1+2+3 at once, copies aligned to end together,
          each at 1/sqrt(4) of its level
 B -> A   START_ACK on every band where B heard the START,
          with B's SNR estimate per band (the report)
-A        band = highest band that both B's report and A's own reception of the
-         START_ACK put at >= 12 dB (LinkConfig::probe_min_snr), else band 0
-A -> B   DATA, POLL, CANCEL on that band; B answers on the band it was asked on
+A        data band  = highest band B's report puts at >= 12 dB (A -> B),
+         reply band = highest band A heard the START_ACK on at >= 12 dB (B -> A),
+         each else band 0 (LinkConfig::probe_min_snr)
+A -> B   DATA, POLL, CANCEL on the data band; DATA and POLL name the reply band
+         in flag bits 1-2, and B answers there
 ```
+
+The two directions are chosen separately because speakers differ: a PC whose
+speakers stop at 12 kHz still receives on the top band, and only its short
+answers stay audible (EXPERIMENTS.md entry 9).
 
 - **The report** is appended to START_ACK: a byte with one bit per band heard,
   then one SNR byte per set bit. Older decoders ignore it; from a peer without
@@ -449,7 +455,7 @@ A -> B   DATA, POLL, CANCEL on that band; B answers on the band it was asked on
   7.5 dB in a room), so the data has about 8 dB of margin at full level.
 - **Fallbacks.** A retried START goes on band 0 alone, at full level. If the
   polls on a high band go unanswered, or its retransmission rounds run out, A
-  drops to band 0 (fresh polls and rounds) and says so (`Event::Band`).
+  drops both bands to 0 (fresh polls and rounds) and says so (`Event::Band`).
 - **Cost.** The START exchange takes as long as its longest copy (about 1.2 s
   and 0.9 s on a K 6 band), and the data travels at 38 % of v1's rate: the
   60-character link takes about 8.6 s instead of 2.85 s. When the probes come

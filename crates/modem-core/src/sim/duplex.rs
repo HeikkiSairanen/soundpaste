@@ -381,13 +381,26 @@ mod tests {
     }
 
     #[test]
-    fn ladder_respects_a_weak_return_direction() {
-        // A -> B carries everything, but A's own microphone stops at 17.4 kHz: the top band
-        // would not carry B's acks.
+    fn ladder_answers_on_the_band_the_return_direction_carries() {
+        // A -> B carries everything, but A's own microphone stops at 17.4 kHz: the data goes
+        // on the top band and B's answers on band 2 (EXPERIMENTS.md entry 9).
         let mut cfg = ladder_room(13);
         cfg.sides[0].ir = cut_at(&cfg.sides[0].ir, 17_400.0, 48000.0);
         let (d, band) = ladder_transfer(&cfg);
-        assert_eq!(band, 2, "{}", d.log());
+        assert_eq!(band, 3, "{}", d.log());
+        assert!(d.log().contains("replies on 2"), "{}", d.log());
+        assert!(d.log().lines().any(|l| l.starts_with("A Log(\"<- DONE") && l.contains("band 2")), "{}", d.log());
+    }
+
+    #[test]
+    fn ladder_quiet_data_with_answers_on_the_normal_band() {
+        // The Mac -> PC case of entry 9: B's speaker carries nothing above 9 kHz (A's
+        // microphone path is cut there), but A -> B carries every band.
+        let mut cfg = ladder_room(16);
+        cfg.sides[0].ir = cut_at(&cfg.sides[0].ir, 9_000.0, 48000.0);
+        let (d, band) = ladder_transfer(&cfg);
+        assert_eq!(band, 3, "{}", d.log());
+        assert!(d.log().contains("replies on 0"), "{}", d.log());
     }
 
     #[test]
